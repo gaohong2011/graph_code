@@ -169,6 +169,51 @@ def _add_reasoning_content_to_messages(messages: list) -> list:
     return messages
 
 
+def _execute_tool_direct(tool_call: dict) -> str:
+    """Execute a tool call directly without ToolNode.
+
+    This avoids ToolNode configuration issues and gives us direct control
+    over error handling and tool_call_id assignment.
+    """
+    name = tool_call.get("name", "")
+    args = tool_call.get("args", {})
+
+    # Map tool names to actual functions
+    from ..tools.file_tools import read_file, write_file, list_directory, glob_search
+    from ..tools.code_tools import grep_search, read_code_chunk
+    from ..tools.exec_tools import bash_command, python_execute
+
+    tool_map = {
+        # With underscore prefix (as defined in get_tools)
+        "_read_file": read_file,
+        "_write_file": write_file,
+        "_list_directory": list_directory,
+        "_glob_search": glob_search,
+        "_grep_search": grep_search,
+        "_read_code_chunk": read_code_chunk,
+        "_bash_command": bash_command,
+        "_python_execute": python_execute,
+        # Without underscore (for compatibility)
+        "read_file": read_file,
+        "write_file": write_file,
+        "list_directory": list_directory,
+        "glob_search": glob_search,
+        "grep_search": grep_search,
+        "read_code_chunk": read_code_chunk,
+        "bash_command": bash_command,
+        "python_execute": python_execute,
+    }
+
+    if name not in tool_map:
+        return f"Error: Unknown tool '{name}'"
+
+    try:
+        result = tool_map[name](**args)
+        return result
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 def tools_node(state: GraphCodeState) -> Dict[str, Any]:
     """Execute tool calls."""
     tool_calls = state.get("tool_calls", [])
@@ -176,28 +221,20 @@ def tools_node(state: GraphCodeState) -> Dict[str, Any]:
         return {}
 
     results = []
-    tool_node = ToolNode(get_tools())
 
-    # Execute tools
+    # Execute tools directly (avoids ToolNode config issues)
     for tool_call in tool_calls:
-        # Safely extract tool_call_id (handle missing or empty id)
-        tool_call_id = tool_call.get("id") or "unknown"
+        # Safely extract tool_call_id (handle missing, empty, or whitespace-only id)
+        raw_id = tool_call.get("id") or ""
+        tool_call_id = raw_id.strip() or "unknown"
 
-        try:
-            result = tool_node.invoke({
-                "messages": [AIMessage(content="", tool_calls=[tool_call])]
-            })
-            if result and "messages" in result:
-                # Verify tool results have valid tool_call_ids
-                for msg in result["messages"]:
-                    if isinstance(msg, ToolMessage) and not msg.tool_call_id:
-                        msg.tool_call_id = tool_call_id
-                results.extend(result["messages"])
-        except Exception as e:
-            results.append(ToolMessage(
-                content=f"Error: {str(e)}",
-                tool_call_id=tool_call_id
-            ))
+        # Execute tool directly
+        content = _execute_tool_direct(tool_call)
+
+        results.append(ToolMessage(
+            content=content,
+            tool_call_id=tool_call_id
+        ))
 
     # Fix messages in state for kimi-k2.5 compatibility
     _add_reasoning_content_to_messages(state.get("messages", []))
