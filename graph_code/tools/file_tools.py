@@ -39,7 +39,10 @@ def read_file(file_path: str, offset: int = 0, limit: Optional[int] = None) -> s
     Returns:
         File content as string with line numbers
     """
-    target = _get_safe_path(file_path)
+    try:
+        target = _get_safe_path(file_path)
+    except ValueError as e:
+        return str(e)
 
     if not target.exists():
         return f"Error: File not found: {file_path}"
@@ -85,7 +88,10 @@ def write_file(file_path: str, content: str, append: bool = False) -> str:
     Returns:
         Success or error message
     """
-    target = _get_safe_path(file_path)
+    try:
+        target = _get_safe_path(file_path)
+    except ValueError as e:
+        return str(e)
 
     try:
         # Create parent directories if needed
@@ -111,7 +117,10 @@ def list_directory(dir_path: str = ".", recursive: bool = False) -> str:
     Returns:
         Directory listing as formatted string
     """
-    target = _get_safe_path(dir_path)
+    try:
+        target = _get_safe_path(dir_path)
+    except ValueError as e:
+        return str(e)
 
     if not target.exists():
         return f"Error: Directory not found: {dir_path}"
@@ -165,7 +174,10 @@ def glob_search(pattern: str, dir_path: str = ".") -> str:
     Returns:
         List of matching files
     """
-    target = _get_safe_path(dir_path)
+    try:
+        target = _get_safe_path(dir_path)
+    except ValueError as e:
+        return str(e)
 
     if not target.exists():
         return f"Error: Directory not found: {dir_path}"
@@ -176,7 +188,11 @@ def glob_search(pattern: str, dir_path: str = ".") -> str:
             for filename in files:
                 full_path = os.path.join(root, filename)
                 rel_path = os.path.relpath(full_path, target)
-                if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(filename, pattern):
+                # Check against both relative path and filename
+                # Also handle **/ patterns by matching basename
+                if fnmatch.fnmatch(rel_path, pattern) or \
+                   fnmatch.fnmatch(filename, pattern) or \
+                   fnmatch.fnmatch(os.path.basename(rel_path), pattern.replace("**/", "")):
                     matches.append(rel_path)
 
         if not matches:

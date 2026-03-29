@@ -37,7 +37,10 @@ def grep_search(pattern: str, path: str = ".", glob: Optional[str] = None) -> st
     Returns:
         Search results with file names and line numbers
     """
-    target = _get_safe_path(path)
+    try:
+        target = _get_safe_path(path)
+    except ValueError as e:
+        return str(e)
 
     try:
         regex = re.compile(pattern)
@@ -109,7 +112,10 @@ def read_code_chunk(
     Returns:
         Code chunk with line numbers
     """
-    target = _get_safe_path(file_path)
+    try:
+        target = _get_safe_path(file_path)
+    except ValueError as e:
+        return str(e)
 
     if not target.exists():
         return f"Error: File not found: {file_path}"
