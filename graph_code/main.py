@@ -19,7 +19,7 @@ from .tools.interaction import get_interaction_store
 
 def print_banner(console: Console):
     """Print welcome banner."""
-    banner = """
+    banner = r"""
    _____                 _       _____          _
   / ____|               | |     / ____|        | |
  | |  __ _ __ __ _ _ __ | |__  | |     ___   __| | ___
