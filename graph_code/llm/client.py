@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from ..config import get_config
+from ..utils.debug import get_debug_callbacks
 
 
 def create_chat_model(
@@ -45,12 +46,16 @@ def create_chat_model(
         if "k2.5" in model.lower() or "k2-thinking" in model.lower():
             extra_body = {"enable_thinking": False}
 
+    # Get debug callbacks if debugging is enabled
+    callbacks = get_debug_callbacks()
+
     return ChatOpenAI(
         api_key=api_key,
         base_url=base_url,
         model=model,
         temperature=temperature,
         extra_body=extra_body,
+        callbacks=callbacks,
     )
 
 

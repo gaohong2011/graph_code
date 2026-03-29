@@ -26,13 +26,13 @@ class TestCreateChatModel:
                     temperature=0.5,
                 )
 
-                mock_chat.assert_called_once_with(
-                    api_key="explicit-key",
-                    base_url="https://explicit.com/v1",
-                    model="explicit-model",
-                    temperature=0.5,
-                    extra_body=None,
-                )
+                call_kwargs = mock_chat.call_args.kwargs
+                assert call_kwargs["api_key"] == "explicit-key"
+                assert call_kwargs["base_url"] == "https://explicit.com/v1"
+                assert call_kwargs["model"] == "explicit-model"
+                assert call_kwargs["temperature"] == 0.5
+                assert call_kwargs["extra_body"] is None
+                assert "callbacks" in call_kwargs
                 assert result is mock_instance
 
     def test_create_chat_model_with_config(self):
@@ -50,13 +50,13 @@ class TestCreateChatModel:
 
                 result = create_chat_model()
 
-                mock_chat.assert_called_once_with(
-                    api_key="config-key",
-                    base_url="https://config.com/v1",
-                    model="config-model",
-                    temperature=0.0,
-                    extra_body=None,
-                )
+                call_kwargs = mock_chat.call_args.kwargs
+                assert call_kwargs["api_key"] == "config-key"
+                assert call_kwargs["base_url"] == "https://config.com/v1"
+                assert call_kwargs["model"] == "config-model"
+                assert call_kwargs["temperature"] == 0.0
+                assert call_kwargs["extra_body"] is None
+                assert "callbacks" in call_kwargs
 
     def test_create_chat_model_missing_api_key(self):
         """Test that ValueError is raised when API key is missing."""

@@ -24,6 +24,11 @@ class Config:
         self.auto_confirm: bool = os.getenv("AUTO_CONFIRM", "false").lower() == "true"
         self.max_tool_iterations: int = int(os.getenv("MAX_TOOL_ITERATIONS", "10"))
 
+        # Debug settings
+        self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
+        self.debug_llm: bool = os.getenv("DEBUG_LLM", "false").lower() == "true"
+        self.langsmith_api_key: Optional[str] = os.getenv("LANGSMITH_API_KEY")
+
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors."""
         errors = []

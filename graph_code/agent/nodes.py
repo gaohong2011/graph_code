@@ -18,6 +18,7 @@ from ..tools.file_tools import read_file, write_file, list_directory, glob_searc
 from ..tools.code_tools import grep_search, read_code_chunk
 from ..tools.exec_tools import bash_command, python_execute
 from ..tools.interaction import ask_user, confirm_action, get_interaction_store
+from ..utils.debug import log_tool_execution
 from .state import GraphCodeState
 
 
@@ -230,6 +231,13 @@ def tools_node(state: GraphCodeState) -> Dict[str, Any]:
 
         # Execute tool directly
         content = _execute_tool_direct(tool_call)
+
+        # Log tool execution for debugging
+        log_tool_execution(
+            tool_name=tool_call.get("name", "unknown"),
+            args=tool_call.get("args", {}),
+            result=content,
+        )
 
         results.append(ToolMessage(
             content=content,

@@ -30,6 +30,62 @@ Optional:
 - `AUTO_CONFIRM` - Skip confirmations (default: `false`)
 - `MAX_TOOL_ITERATIONS` - Safety limit (default: `10`)
 
+### Debug Mode
+
+Enable debug logging to see LLM interactions and tool execution:
+
+```bash
+# Debug LLM API calls (shows request/response content)
+DEBUG_LLM=true python -m graph_code
+
+# Debug everything (LLM + state transitions + tool execution)
+DEBUG=true python -m graph_code
+
+# Debug with log file
+DEBUG=true DEBUG_LOG_FILE=graph_code.log python -m graph_code
+```
+
+Debug output includes:
+- **Chat Model Start** - Messages sent to LLM (with tool calls)
+- **LLM End** - Response from LLM (content and tool_calls)
+- **LLM ERROR** - Any API errors
+- **TOOL EXECUTION** - Tool name, arguments, and results
+
+Example debug output:
+```
+================================================================================
+[14:23:45.123] >>> REQUEST: Chat Model Start
+================================================================================
+{
+  "model": "moonshot-v1-8k",
+  "message_count": 3,
+  "messages": [
+    {"role": "SystemMessage", "content": "You are Graph Code..."},
+    {"role": "HumanMessage", "content": "read README.md"},
+    {"role": "AIMessage", "content": null, "tool_calls": [{"id": "call_123", "name": "read_file", "args": {"file_path": "README.md"}}]}
+  ]
+}
+================================================================================
+
+--------------------------------------------------------------------------------
+[14:23:45.456] TOOL EXECUTION: _read_file
+--------------------------------------------------------------------------------
+Arguments: {"file_path": "README.md"}
+Result: # Graph Code\n\nBased on LangGraph...
+--------------------------------------------------------------------------------
+
+================================================================================
+[14:23:46.789] <<< RESPONSE: LLM End
+================================================================================
+{
+  "output_count": 1,
+  "outputs": [
+    {"type": "AIMessage", "content": "Here's the README content...", "tool_calls": []}
+  ]
+}
+================================================================================
+```
+
 ### Run Commands
 ```bash
 # Interactive mode
