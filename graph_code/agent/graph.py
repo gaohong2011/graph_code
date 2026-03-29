@@ -76,6 +76,12 @@ def run_agent(
     if state is None:
         state = create_initial_state()
 
+    # Clear temporary state fields from previous interactions
+    state["final_response"] = None
+    state["error"] = None
+    state["pending_question"] = False
+    state["pending_confirmation"] = False
+
     # Add user message
     state["messages"].append(HumanMessage(content=user_input))
 
