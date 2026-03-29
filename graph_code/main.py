@@ -136,16 +136,10 @@ def run_interactive(console: Console, args):
             for event in run_agent(user_input, state, thread_id):
                 event_count += 1
 
-                # Update state
+                # Update state (skip messages - managed by LangGraph internally)
                 for key, value in event.items():
-                    if key in state:
-                        if key == "messages":
-                            # Merge messages carefully
-                            existing_content = {m.content for m in state["messages"]}
-                            for msg in value:
-                                if msg.content not in existing_content:
-                                    state["messages"].append(msg)
-                        elif key == "tool_results":
+                    if key in state and key != "messages":
+                        if key == "tool_results":
                             state["tool_results"].extend(value)
                         else:
                             state[key] = value
@@ -163,14 +157,8 @@ def run_interactive(console: Console, args):
                         # Resume with interaction response
                         for resume_event in resume_with_interaction(state, interaction_result, thread_id):
                             for key, value in resume_event.items():
-                                if key in state:
-                                    if key == "messages":
-                                        existing_content = {m.content for m in state["messages"]}
-                                        for msg in value:
-                                            if msg.content not in existing_content:
-                                                state["messages"].append(msg)
-                                    else:
-                                        state[key] = value
+                                if key in state and key != "messages":
+                                    state[key] = value
 
                             if resume_event.get("final_response"):
                                 console.print(f"\n[bold green]Graph Code:[/bold green]")
