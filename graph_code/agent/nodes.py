@@ -180,16 +180,23 @@ def tools_node(state: GraphCodeState) -> Dict[str, Any]:
 
     # Execute tools
     for tool_call in tool_calls:
+        # Safely extract tool_call_id (handle missing or empty id)
+        tool_call_id = tool_call.get("id") or "unknown"
+
         try:
             result = tool_node.invoke({
                 "messages": [AIMessage(content="", tool_calls=[tool_call])]
             })
             if result and "messages" in result:
+                # Verify tool results have valid tool_call_ids
+                for msg in result["messages"]:
+                    if isinstance(msg, ToolMessage) and not msg.tool_call_id:
+                        msg.tool_call_id = tool_call_id
                 results.extend(result["messages"])
         except Exception as e:
             results.append(ToolMessage(
                 content=f"Error: {str(e)}",
-                tool_call_id=tool_call.get("id", "unknown")
+                tool_call_id=tool_call_id
             ))
 
     # Fix messages in state for kimi-k2.5 compatibility
