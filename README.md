@@ -367,10 +367,49 @@ Error: Access denied: /etc/passwd is outside working directory
 
 ### 调试模式
 
-启用详细日志：
+查看与 LLM 的交互详情：
+
 ```bash
-export DEBUG=1
-python -m graph_code
+# 查看 LLM 请求/响应（推荐）
+DEBUG_LLM=true python -m graph_code
+
+# 完整调试（包括工具执行）
+DEBUG=true python -m graph_code
+
+# 输出到文件
+DEBUG=true DEBUG_LOG_FILE=graph_code.log python -m graph_code
+```
+
+**调试输出示例：**
+```
+================================================================================
+[14:23:45.123] >>> REQUEST: Chat Model Start
+================================================================================
+{
+  "model": "moonshot-v1-8k",
+  "messages": [
+    {"role": "SystemMessage", "content": "You are Graph Code..."},
+    {"role": "HumanMessage", "content": "read README.md"},
+    {"role": "AIMessage", "tool_calls": [{"id": "call_123", "name": "read_file"}]}
+  ]
+}
+================================================================================
+
+--------------------------------------------------------------------------------
+[14:23:45.456] TOOL EXECUTION: _read_file
+--------------------------------------------------------------------------------
+Arguments: {"file_path": "README.md"}
+Result: # Graph Code...
+--------------------------------------------------------------------------------
+
+================================================================================
+[14:23:46.789] <<< RESPONSE: LLM End
+================================================================================
+{
+  "output_count": 1,
+  "outputs": [{"type": "AIMessage", "content": "Here's the content..."}]
+}
+================================================================================
 ```
 
 ## 开发计划
