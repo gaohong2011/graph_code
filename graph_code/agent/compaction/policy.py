@@ -21,6 +21,7 @@ class CompactionPolicy:
     tool_result_preview_chars: int = 240
     min_tool_result_tokens: int = 128
     message_count_threshold: int = 40
+    warning_ratio: float = 0.65
 
     @property
     def auto_compact_threshold(self) -> int:
@@ -29,6 +30,10 @@ class CompactionPolicy:
     @property
     def micro_compact_threshold(self) -> int:
         return max(1, int(self.context_window_tokens * self.micro_compact_ratio))
+
+    @property
+    def warning_threshold(self) -> int:
+        return max(1, int(self.context_window_tokens * self.warning_ratio))
 
 
 def get_compaction_policy(config: Any) -> CompactionPolicy:
@@ -44,6 +49,7 @@ def get_compaction_policy(config: Any) -> CompactionPolicy:
         tool_result_preview_chars=int(getattr(config, "micro_compact_preview_chars", 240)),
         min_tool_result_tokens=int(getattr(config, "micro_compact_min_tool_result_tokens", 128)),
         message_count_threshold=int(getattr(config, "compact_message_count_threshold", 40)),
+        warning_ratio=float(getattr(config, "compact_warning_ratio", 0.65)),
     )
 
 

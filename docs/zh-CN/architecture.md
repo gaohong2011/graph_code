@@ -87,11 +87,14 @@ Graph 支持 micro、summary 和 manual compaction。完整 transcript 保留在
 
 压缩策略按层执行：
 
-1. Token policy 先估算当前上下文大小，并记录 `compact_state.token_budget`。
-2. Micro compact 优先压缩旧的 `ToolMessage` 大输出，保留最近的 tool result 原文，并且不改变 assistant `tool_calls` / `ToolMessage.tool_call_id` 配对。
-3. 如果 micro 后仍超过 summary 阈值，或者达到兼容的消息数阈值，则创建 compact boundary 和结构化 summary。
-4. Summary 后保留最近消息原文；保留边界按协议分组，避免裁掉 tool-call group 的一半。
-5. `compact` 工具发出的 manual compact request 也通过同一个 `compact_check` 路径处理。
+1. `build_prompt` 在每次模型调用前运行上下文管理，因此无工具的长对话也会在请求 provider 前压缩。
+2. Token policy 先估算当前上下文大小，并记录 `compact_state.token_budget` 和 warning state。
+3. Micro compact 优先压缩旧的可压缩 `ToolMessage` 大输出，保留最近的 tool result 原文，并且不改变 assistant `tool_calls` / `ToolMessage.tool_call_id` 配对。read/search/bash/worktree/MCP 结果可压缩，协议/team/control 工具结果保持原样。
+4. Time-based micro compact 可以在配置的 turn gap 后清理旧的可压缩 tool result。
+5. 如果 micro 后仍超过 summary 阈值，或者达到兼容的消息数阈值，则创建 compact boundary 和结构化 summary。
+6. Summary 后保留最近消息原文；保留边界按协议分组，避免裁掉 tool-call group 的一半。
+7. `compact` 工具发出的 manual compact request 会写入 `compact_state.pending_manual_request`，并通过同一个 `compact_check` 路径处理。
+8. provider 返回 context-too-long 时，只要 `recovery_state["context_retry_budget"]` 还有预算，就触发 reactive compact retry。
 
 Summary compaction 保留：
 
@@ -101,9 +104,11 @@ Summary compaction 保留：
 - 关键决策
 - 下一步
 
-真实模型配置下，summary compact 会尝试调用一次无工具 summarizer；失败时回退本地 extractive summary，避免压缩失败打断主流程。
+真实模型配置下，summary compact 会用 Claude Code 风格的 section prompt 调用一次无工具 summarizer。summarizer 自己 prompt-too-long 时，会用更短 prompt 重试一次。仍失败时回退本地 extractive summary，避免压缩失败打断主流程。连续 summarizer 失败会触发 circuit breaker。
 
-大工具输出不会长期留在模型上下文；persisted output marker 会指向磁盘文件。可通过 `CONTEXT_WINDOW_TOKENS`、`MICRO_COMPACT_RATIO`、`AUTO_COMPACT_RATIO`、`COMPACT_RECENT_MESSAGES`、`MICRO_COMPACT_KEEP_TOOL_RESULTS`、`COMPACT_MESSAGE_COUNT_THRESHOLD` 和 `COMPACT_USE_MODEL_SUMMARY` 调整策略。
+Summary compact 会把完整压缩前 transcript 写到 `.agent/transcripts/{boundary}.jsonl`，运行可选 `.agent/hooks/pre_compact.py` 和 `.agent/hooks/post_compact.py`，并在压缩后重新注入 current task、planning state、loaded skill manifest、worktree context、MCP connection state、notifications 和 transcript path。
+
+大工具输出不会长期留在模型上下文；persisted output marker 会指向磁盘文件。可通过 `CONTEXT_WINDOW_TOKENS`、`MICRO_COMPACT_RATIO`、`AUTO_COMPACT_RATIO`、`COMPACT_RECENT_MESSAGES`、`MICRO_COMPACT_KEEP_TOOL_RESULTS`、`COMPACT_MESSAGE_COUNT_THRESHOLD`、`COMPACT_USE_MODEL_SUMMARY`、`COMPACT_WARNING_RATIO`、`COMPACT_FAILURE_CIRCUIT_BREAKER`、`COMPACT_SUMMARY_RETRY_BUDGET` 和 `TIME_BASED_MICROCOMPACT_TURN_GAP` 调整策略。
 
 ## 错误恢复
 

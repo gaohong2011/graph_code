@@ -87,11 +87,14 @@ The graph supports micro, summary, and manual compaction. The full transcript st
 
 Compaction is layered:
 
-1. Token policy estimates current context size and records `compact_state.token_budget`.
-2. Micro compact first replaces old bulky `ToolMessage` content while preserving assistant `tool_calls` / `ToolMessage.tool_call_id` protocol pairs.
-3. If the context is still above the summary threshold, or the compatibility message-count threshold is reached, the graph creates a compact boundary plus a structured summary.
-4. Recent messages are kept verbatim after the summary; retained boundaries are protocol-grouped so a tool-call group is not cut in half.
-5. Manual compact requests from the `compact` tool run through the same `compact_check` path.
+1. `build_prompt` runs context management before every model call, so long no-tool histories are compacted before the provider request.
+2. Token policy estimates current context size and records `compact_state.token_budget` plus warning state.
+3. Micro compact first replaces old bulky compactable `ToolMessage` content while preserving assistant `tool_calls` / `ToolMessage.tool_call_id` protocol pairs. Read/search/bash/worktree/MCP results are compactable; protocol/team/control tools are kept intact.
+4. Time-based micro compact can clear old compactable tool results after a configured turn gap.
+5. If the context is still above the summary threshold, or the compatibility message-count threshold is reached, the graph creates a compact boundary plus a structured summary.
+6. Recent messages are kept verbatim after the summary; retained boundaries are protocol-grouped so a tool-call group is not cut in half.
+7. Manual compact requests from the `compact` tool are stored in `compact_state.pending_manual_request` and run through the same `compact_check` path.
+8. Context-too-long provider errors trigger a reactive compact retry while `recovery_state["context_retry_budget"]` remains.
 
 Summary compaction preserves:
 
@@ -101,9 +104,11 @@ Summary compaction preserves:
 - Key decisions
 - Next step
 
-With a real model configuration, summary compact attempts one no-tools summarizer call. If that call fails, the graph falls back to the local extractive summary so compaction does not interrupt the main loop.
+With a real model configuration, summary compact attempts one no-tools summarizer call using a Claude Code-style section prompt. If the summarizer prompt is too long, it retries once with a shorter prompt. If summarization still fails, the graph falls back to the local extractive summary so compaction does not interrupt the main loop. Consecutive summarizer failures trip a circuit breaker.
 
-Large tool output is not kept permanently in model context; persisted output markers point to disk. Tune behavior with `CONTEXT_WINDOW_TOKENS`, `MICRO_COMPACT_RATIO`, `AUTO_COMPACT_RATIO`, `COMPACT_RECENT_MESSAGES`, `MICRO_COMPACT_KEEP_TOOL_RESULTS`, `COMPACT_MESSAGE_COUNT_THRESHOLD`, and `COMPACT_USE_MODEL_SUMMARY`.
+Summary compact writes the full pre-compact transcript to `.agent/transcripts/{boundary}.jsonl`, runs optional `.agent/hooks/pre_compact.py` and `.agent/hooks/post_compact.py`, and rehydrates current task, planning state, loaded skill manifest, worktree context, MCP connection state, notifications, and transcript path into post-compact context.
+
+Large tool output is not kept permanently in model context; persisted output markers point to disk. Tune behavior with `CONTEXT_WINDOW_TOKENS`, `MICRO_COMPACT_RATIO`, `AUTO_COMPACT_RATIO`, `COMPACT_RECENT_MESSAGES`, `MICRO_COMPACT_KEEP_TOOL_RESULTS`, `COMPACT_MESSAGE_COUNT_THRESHOLD`, `COMPACT_USE_MODEL_SUMMARY`, `COMPACT_WARNING_RATIO`, `COMPACT_FAILURE_CIRCUIT_BREAKER`, `COMPACT_SUMMARY_RETRY_BUDGET`, and `TIME_BASED_MICROCOMPACT_TURN_GAP`.
 
 ## Recovery
 

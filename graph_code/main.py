@@ -325,6 +325,28 @@ def _render_node_progress(node_output: dict, console: Console) -> None:
     if reason == "transient_model_retry":
         console.print("[dim]Model call was transiently unavailable. Retrying...[/dim]")
         return
+    if reason == "context_compact_retry":
+        console.print("[dim]Context was too long. Compacted and retrying model call...[/dim]")
+        return
+    if reason in {"micro_compact_complete", "summary_compact_complete"}:
+        compact_state = node_output.get("compact_state") or {}
+        mode = compact_state.get("mode", "compact")
+        micro_count = compact_state.get("micro_compacted_tool_results", 0)
+        kept = compact_state.get("recent_messages_kept", 0)
+        detail = f"mode={mode}"
+        if micro_count:
+            detail += f", tool results compacted={micro_count}"
+        if kept:
+            detail += f", recent messages kept={kept}"
+        console.print(f"[dim]Compacted context ({detail}).[/dim]")
+        return
+    if reason == "compact_not_needed":
+        warning = (node_output.get("compact_state") or {}).get("warning_state") or {}
+        if warning.get("warning"):
+            console.print(
+                "[dim]Context is getting large; compaction will run when needed.[/dim]"
+            )
+        return
     if reason == "tools_executed":
         names = _tool_names_from_results(node_output.get("tool_results") or [])
         label = ", ".join(names) if names else "tool"

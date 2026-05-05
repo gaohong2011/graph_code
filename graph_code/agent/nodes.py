@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import hashlib
+import json
 from typing import Any
 from pathlib import Path
 
@@ -28,6 +30,12 @@ from .compaction import (
     compact_messages,
     format_summary,
     get_compaction_policy,
+)
+from .compaction.prompt import build_model_compact_prompt, format_model_compact_summary
+from .compaction.runtime_context import (
+    build_rehydration_text,
+    run_compact_hook,
+    write_transcript,
 )
 from .state import AgentState
 
@@ -263,7 +271,15 @@ def drain_notifications(state: AgentState) -> dict[str, Any]:
     return {"transition_reason": "no_notifications"}
 
 
-def build_prompt(state: AgentState) -> dict[str, Any]:
+def build_prompt(state: AgentState, config: Config | None = None) -> dict[str, Any]:
+    compacted = compact_check(state, config=config)
+    if compacted.get("transition_reason") != "compact_not_needed":
+        return compacted
+    if not state.get("context_messages"):
+        return {
+            "context_messages": list(state.get("messages", [])),
+            "transition_reason": "prompt_built",
+        }
     return {"transition_reason": "prompt_built"}
 
 
@@ -321,7 +337,7 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
 
 
 def route_model_response(state: AgentState) -> str:
-    if state.get("transition_reason") == "transient_model_retry":
+    if state.get("transition_reason") in {"transient_model_retry", "context_compact_retry"}:
         return "retry"
     if state.get("pending_tool_calls") or state.get("tool_calls"):
         return "tools"
@@ -463,8 +479,12 @@ def run_post_tool_hooks(state: AgentState) -> dict[str, Any]:
 
 def append_tool_results(state: AgentState) -> dict[str, Any]:
     messages: list[ToolMessage] = []
+    compact_state = dict(state.get("compact_state") or {})
     for item in state.get("tool_results", []):
         envelope = item if isinstance(item, ToolResultEnvelope) else ToolResultEnvelope.model_validate(item)
+        manual_request = _compact_request_from_envelope(envelope)
+        if manual_request:
+            compact_state["pending_manual_request"] = manual_request
         messages.append(
             ToolMessage(
                 content=envelope.model_dump_json(),
@@ -476,12 +496,18 @@ def append_tool_results(state: AgentState) -> dict[str, Any]:
         "context_messages": (
             list(state.get("context_messages") or state.get("messages", [])) + messages
         ),
+        "compact_state": compact_state,
         "tool_results": [],
         "transition_reason": "tool_results_appended",
     }
 
 
-def compact_check(state: AgentState, config: Config | None = None) -> dict[str, Any]:
+def compact_check(
+    state: AgentState,
+    config: Config | None = None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     messages = list(state.get("messages", []))
     if not messages:
         return {
@@ -490,16 +516,32 @@ def compact_check(state: AgentState, config: Config | None = None) -> dict[str, 
         }
 
     manual_summary = _pending_manual_compact_summary(state)
+    context_hash = _context_fingerprint(messages, manual_summary)
+    compact_state = dict(state.get("compact_state") or {})
+    if (
+        not force
+        and not manual_summary
+        and state.get("context_messages")
+        and compact_state.get("last_context_hash") == context_hash
+    ):
+        return {
+            "compact_state": compact_state,
+            "transition_reason": "compact_not_needed",
+        }
+
     policy = get_compaction_policy(config or get_config())
     compacted = compact_messages(
         messages,
         policy,
         turn_count=state.get("turn_count", 0),
         manual_summary=manual_summary,
+        force_micro=_should_time_based_microcompact(state, config or get_config()),
     )
-    compacted = _maybe_add_model_compact_summary(compacted, config or get_config())
+    compacted = _add_pre_compact_context(compacted, state, config or get_config())
+    compacted = _maybe_add_model_compact_summary(compacted, config or get_config(), state)
+    compacted = _add_post_compact_context(compacted, state, config or get_config())
 
-    compact_state = _updated_compact_state(state, compacted)
+    compact_state = _updated_compact_state(state, compacted, context_hash)
     if compacted.mode == "summary":
         transition_reason = "summary_compact_complete"
     elif compacted.mode == "micro":
@@ -513,9 +555,20 @@ def compact_check(state: AgentState, config: Config | None = None) -> dict[str, 
     }
 
 
-def recovery_handler(state: AgentState) -> dict[str, Any]:
+def recovery_handler(state: AgentState, config: Config | None = None) -> dict[str, Any]:
     error = state.get("error")
     if error:
+        if _is_context_too_long_error(str(error)) and _recovery_budget(state, "context_retry_budget") > 0:
+            compacted = compact_check(state, config=config, force=True)
+            recovery = _consume_recovery_budget(state, "context_retry_budget")
+            update = {
+                "error": None,
+                "transition_reason": "context_compact_retry",
+                "recovery_state": recovery,
+            }
+            update.update(compacted)
+            update["transition_reason"] = "context_compact_retry"
+            return update
         if _is_transient_model_error(str(error)) and _recovery_budget(state, "transient_retry_budget") > 0:
             time.sleep(_transient_retry_delay(state))
             return {
@@ -630,9 +683,33 @@ def _is_transient_model_error(error: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def _is_context_too_long_error(error: str) -> bool:
+    normalized = error.lower()
+    markers = (
+        "context length",
+        "context_length",
+        "context too long",
+        "prompt too long",
+        "maximum context",
+        "token limit",
+        "too many tokens",
+        "413",
+    )
+    return any(marker in normalized for marker in markers)
+
+
 def _transient_retry_delay(state: AgentState) -> float:
     remaining = _recovery_budget(state, "transient_retry_budget")
     return min(2.0, 0.5 * (3 - remaining))
+
+
+def _should_time_based_microcompact(state: AgentState, config: Config) -> bool:
+    gap = int(getattr(config, "time_based_microcompact_turn_gap", 0) or 0)
+    if gap <= 0:
+        return False
+    compact_state = state.get("compact_state") or {}
+    last_turn = int(compact_state.get("last_main_loop_assistant_turn", 0) or 0)
+    return int(state.get("turn_count", 0) or 0) - last_turn >= gap
 
 
 def _remove_current_permission_call(
@@ -677,13 +754,24 @@ def _last_tool_call_order(state: AgentState) -> dict[str, int]:
 def _maybe_add_model_compact_summary(
     compacted: CompactionOutput,
     config: Config,
+    state: AgentState,
 ) -> CompactionOutput:
     if compacted.mode != "summary" or not compacted.summary:
         return compacted
     if config.llm_model == "mock" or not getattr(config, "compact_use_model_summary", True):
         return compacted
+    if not config.llm_api_key:
+        compacted.token_budget["model_summary_skipped"] = "missing_api_key"
+        return compacted
+    if int((state.get("compact_state") or {}).get("consecutive_failures", 0)) >= int(
+        getattr(config, "compact_failure_circuit_breaker", 3)
+    ):
+        compacted.token_budget["model_summary_skipped"] = "circuit_breaker"
+        return compacted
 
-    model_summary = _generate_model_compact_summary(compacted.summary, config)
+    model_summary, failed = _generate_model_compact_summary(compacted.summary, config)
+    if failed:
+        compacted.token_budget["model_summary_failed"] = True
     if not model_summary:
         return compacted
 
@@ -702,48 +790,140 @@ def _maybe_add_model_compact_summary(
     )
 
 
-def _generate_model_compact_summary(summary: dict[str, Any], config: Config) -> str | None:
-    prompt = (
-        "Summarize this coding-agent conversation state for continuation.\n"
-        "Return plain text only. Do not request tools. Preserve concrete files, "
-        "decisions, errors, completed actions, current work, and next step.\n\n"
-        f"Extractive state:\n{format_summary(summary)}"
+def _generate_model_compact_summary(summary: dict[str, Any], config: Config) -> tuple[str | None, bool]:
+    llm = get_llm(config=config)
+    prompts = [build_model_compact_prompt(format_summary(summary))]
+    if int(getattr(config, "compact_summary_retry_budget", 1)) > 0:
+        prompts.append(build_model_compact_prompt(format_summary(summary), short=True))
+
+    failed = False
+    for prompt in prompts:
+        try:
+            response = llm.invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "You are a context compaction summarizer. You have no tools. "
+                            "If you try to call tools, the compaction turn is wasted."
+                        )
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            )
+        except Exception as exc:
+            failed = True
+            if _is_context_too_long_error(str(exc)):
+                continue
+            return None, True
+        content = format_model_compact_summary(getattr(response, "content", ""))
+        if content:
+            return content, failed
+        failed = True
+    return None, failed
+
+
+def _add_pre_compact_context(
+    compacted: CompactionOutput,
+    state: AgentState,
+    config: Config,
+) -> CompactionOutput:
+    if compacted.mode != "summary" or not compacted.summary or not compacted.boundary_id:
+        return compacted
+    summary = dict(compacted.summary)
+    transcript_path = write_transcript(
+        list(state.get("messages", [])),
+        config.working_path,
+        compacted.boundary_id,
     )
-    try:
-        response = get_llm(config=config).invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You are a context compaction summarizer. You have no tools. "
-                        "If you try to call tools, the compaction turn is wasted."
-                    )
-                ),
-                HumanMessage(content=prompt),
-            ]
-        )
-    except Exception:
-        return None
-    content = getattr(response, "content", "")
-    if isinstance(content, str):
-        stripped = content.strip()
-        return stripped or None
-    return str(content).strip() or None
+    summary["transcript_path"] = transcript_path
+    pre_hooks = run_compact_hook(config.working_path, "pre_compact")
+    if pre_hooks:
+        summary["pre_compact_hooks"] = pre_hooks
+    context_messages = list(compacted.context_messages)
+    if len(context_messages) >= 2:
+        context_messages[1] = HumanMessage(content=format_summary(summary))
+    return CompactionOutput(
+        mode=compacted.mode,
+        context_messages=context_messages,
+        summary=summary,
+        boundary_id=compacted.boundary_id,
+        token_budget=compacted.token_budget,
+        micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+    )
 
 
-def _updated_compact_state(state: AgentState, compacted: Any) -> dict[str, Any]:
+def _add_post_compact_context(
+    compacted: CompactionOutput,
+    state: AgentState,
+    config: Config,
+) -> CompactionOutput:
+    if compacted.mode != "summary" or not compacted.summary:
+        return compacted
+    post_hooks = run_compact_hook(config.working_path, "post_compact")
+    rehydration_text = build_rehydration_text(
+        state,
+        transcript_path=compacted.summary.get("transcript_path"),
+        post_compact_hooks=post_hooks,
+    )
+    if rehydration_text.strip() == "Runtime context after compaction:":
+        return compacted
+    summary = dict(compacted.summary)
+    if post_hooks:
+        summary["post_compact_hooks"] = post_hooks
+    context_messages = list(compacted.context_messages)
+    insert_at = _trailing_tool_group_start(context_messages)
+    context_messages.insert(insert_at, HumanMessage(content=rehydration_text))
+    return CompactionOutput(
+        mode=compacted.mode,
+        context_messages=context_messages,
+        summary=summary,
+        boundary_id=compacted.boundary_id,
+        token_budget=compacted.token_budget,
+        micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+    )
+
+
+def _trailing_tool_group_start(messages: list[Any]) -> int:
+    if not messages or not isinstance(messages[-1], ToolMessage):
+        return len(messages)
+    index = len(messages) - 1
+    while index >= 0 and isinstance(messages[index], ToolMessage):
+        index -= 1
+    if index >= 0 and getattr(messages[index], "tool_calls", None):
+        return index
+    return len(messages)
+
+
+def _updated_compact_state(
+    state: AgentState,
+    compacted: Any,
+    context_hash: str | None = None,
+) -> dict[str, Any]:
     compact_state = dict(state.get("compact_state") or {})
     summaries = list(compact_state.get("summaries") or [])
     history = list(compact_state.get("compaction_history") or [])
     if compacted.summary:
         summaries.append(compacted.summary)
-        compact_state["last_compacted_turn"] = state.get("turn_count", 0)
         compact_state["last_boundary_id"] = compacted.boundary_id
+        compact_state["transcript_path"] = compacted.summary.get("transcript_path")
         compact_state["recent_messages_kept"] = len(compacted.context_messages)
+        compact_state["pending_manual_request"] = None
+    if compacted.mode in {"summary", "micro"}:
+        compact_state["last_compacted_turn"] = state.get("turn_count", 0)
+        compact_state["last_main_loop_assistant_turn"] = state.get("turn_count", 0)
+    if context_hash:
+        compact_state["last_context_hash"] = context_hash
     compact_state["mode"] = compacted.mode
     compact_state["summaries"] = summaries
     compact_state["token_budget"] = compacted.token_budget
+    compact_state["warning_state"] = _compact_warning_state(compacted.token_budget)
     compact_state["micro_compacted_tool_results"] = compacted.micro_compacted_tool_results
-    compact_state["consecutive_failures"] = 0
+    if compacted.token_budget.get("model_summary_failed"):
+        compact_state["consecutive_failures"] = int(compact_state.get("consecutive_failures", 0)) + 1
+    elif compacted.token_budget.get("model_summary_skipped") == "circuit_breaker":
+        compact_state["consecutive_failures"] = int(compact_state.get("consecutive_failures", 0))
+    elif compacted.summary and compacted.summary.get("model_summary"):
+        compact_state["consecutive_failures"] = 0
     history.append(
         {
             "mode": compacted.mode,
@@ -758,7 +938,25 @@ def _updated_compact_state(state: AgentState, compacted: Any) -> dict[str, Any]:
     return compact_state
 
 
+def _compact_warning_state(token_budget: dict[str, Any]) -> dict[str, Any]:
+    estimated = int(token_budget.get("estimated_tokens") or 0)
+    warning_threshold = int(token_budget.get("warning_threshold") or 0)
+    auto_threshold = int(token_budget.get("auto_compact_threshold") or 0)
+    context_window = int(token_budget.get("context_window_tokens") or 0)
+    return {
+        "estimated_tokens": estimated,
+        "warning_threshold": warning_threshold,
+        "auto_compact_threshold": auto_threshold,
+        "context_window_tokens": context_window,
+        "warning": bool(warning_threshold and estimated >= warning_threshold),
+        "auto_compact": bool(auto_threshold and estimated >= auto_threshold),
+    }
+
+
 def _pending_manual_compact_summary(state: AgentState) -> str | None:
+    request = (state.get("compact_state") or {}).get("pending_manual_request")
+    if isinstance(request, dict):
+        return request.get("summary") or ""
     for item in state.get("tool_results", []) or []:
         envelope = (
             item
@@ -776,6 +974,38 @@ def _pending_manual_compact_summary(state: AgentState) -> str | None:
         if payload.get("mode") == "manual":
             return payload.get("summary") or ""
     return None
+
+
+def _compact_request_from_envelope(envelope: ToolResultEnvelope) -> dict[str, Any] | None:
+    if envelope.metadata.get("tool_name") != "compact":
+        return None
+    try:
+        payload = json.loads(envelope.content)
+    except Exception:
+        payload = {"mode": "manual", "summary": envelope.content}
+    if payload.get("mode") != "manual":
+        return None
+    return {"mode": "manual", "summary": payload.get("summary") or ""}
+
+
+def _context_fingerprint(messages: list[Any], manual_summary: str | None = None) -> str:
+    parts: list[dict[str, Any]] = []
+    for message in messages:
+        parts.append(
+            {
+                "type": getattr(message, "type", type(message).__name__),
+                "content": getattr(message, "content", ""),
+                "tool_calls": getattr(message, "tool_calls", None),
+                "tool_call_id": getattr(message, "tool_call_id", None),
+            }
+        )
+    payload = json.dumps(
+        {"messages": parts, "manual_summary": manual_summary},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _summarize_messages(messages: list[Any]) -> dict[str, Any]:

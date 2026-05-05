@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from graph_code.agent.state import create_initial_state
-from graph_code.main import _iter_node_outputs, _resume_until_complete, handle_graph_interrupt
+from graph_code.main import (
+    _iter_node_outputs,
+    _render_node_progress,
+    _resume_until_complete,
+    handle_graph_interrupt,
+)
 from graph_code.tools.schema import ToolResultEnvelope
 
 
@@ -115,3 +120,23 @@ def test_handle_graph_interrupt_truncates_large_args(monkeypatch):
     assert "tetris.html" in output
     assert "5000 chars" in output
     assert long_content not in output
+
+
+def test_render_node_progress_shows_compaction_status():
+    console = Console(record=True)
+
+    _render_node_progress(
+        {
+            "transition_reason": "summary_compact_complete",
+            "compact_state": {
+                "mode": "summary",
+                "micro_compacted_tool_results": 2,
+                "recent_messages_kept": 5,
+            },
+        },
+        console,
+    )
+
+    output = console.export_text()
+    assert "Compacted context" in output
+    assert "summary" in output

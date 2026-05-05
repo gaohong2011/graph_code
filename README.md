@@ -100,9 +100,12 @@ Graph Code keeps the full transcript in `AgentState.messages` and sends a separa
 
 Compaction is layered:
 
-- Micro compact replaces old bulky `ToolMessage` content with `[old tool result compacted]`, while preserving `tool_call_id` protocol pairs.
+- `build_prompt` runs context management before every model call, so long pure-chat histories compact even when no tool was used.
+- Micro compact replaces old bulky compactable `ToolMessage` content with `[old tool result compacted]`, while preserving `tool_call_id` protocol pairs.
 - Summary compact creates a compact boundary plus a structured summary, then keeps recent messages verbatim.
 - Manual compact requests from the `compact` tool route through the same `compact_check` node.
+- Context-too-long model errors trigger a reactive compact retry within `context_retry_budget`.
+- Summary compact writes `.agent/transcripts/{boundary}.jsonl`, runs optional `.agent/hooks/pre_compact.py` and `post_compact.py`, and rehydrates task, planning, skill, worktree, MCP, notification, and transcript context.
 
 Useful tuning knobs:
 
@@ -114,6 +117,10 @@ export COMPACT_RECENT_MESSAGES=12
 export MICRO_COMPACT_KEEP_TOOL_RESULTS=4
 export COMPACT_MESSAGE_COUNT_THRESHOLD=40
 export COMPACT_USE_MODEL_SUMMARY=true
+export COMPACT_WARNING_RATIO=0.65
+export COMPACT_FAILURE_CIRCUIT_BREAKER=3
+export COMPACT_SUMMARY_RETRY_BUDGET=1
+export TIME_BASED_MICROCOMPACT_TURN_GAP=0
 ```
 
 ## Mock Tests

@@ -47,6 +47,12 @@ def build_agent(
     def call_model_node(state: AgentState) -> dict[str, Any]:
         return call_model(state, config=cfg)
 
+    def build_prompt_node(state: AgentState) -> dict[str, Any]:
+        return build_prompt(state, config=cfg)
+
+    def recovery_handler_node(state: AgentState) -> dict[str, Any]:
+        return recovery_handler(state, config=cfg)
+
     def permission_gate_node(state: AgentState) -> dict[str, Any]:
         return permission_gate(state, config=cfg)
 
@@ -57,9 +63,9 @@ def build_agent(
         return compact_check(state, config=cfg)
 
     workflow.add_node("drain_notifications", drain_notifications)
-    workflow.add_node("build_prompt", build_prompt)
+    workflow.add_node("build_prompt", build_prompt_node)
     workflow.add_node("call_model", call_model_node)
-    workflow.add_node("recovery_handler", recovery_handler)
+    workflow.add_node("recovery_handler", recovery_handler_node)
     workflow.add_node("route_model_response", lambda state: {})
     workflow.add_node("permission_gate", permission_gate_node)
     workflow.add_node("human_permission_interrupt", human_permission_interrupt)
@@ -68,7 +74,7 @@ def build_agent(
     workflow.add_node("run_post_tool_hooks", run_post_tool_hooks)
     workflow.add_node("append_tool_results", append_tool_results)
     workflow.add_node("compact_check", compact_check_node)
-    workflow.add_node("recovery_handler_after_tools", recovery_handler)
+    workflow.add_node("recovery_handler_after_tools", recovery_handler_node)
     workflow.add_node("final_response", final_response)
 
     workflow.add_edge(START, "drain_notifications")

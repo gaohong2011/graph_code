@@ -16,6 +16,20 @@ from .policy import (
     estimate_messages_tokens,
 )
 
+COMPACTABLE_TOOL_NAMES = {
+    "read_file",
+    "search_files",
+    "bash",
+    "worktree_run",
+    "_read_file",
+    "_grep_search",
+    "_glob_search",
+    "_bash_command",
+    "bash_command",
+    "grep_search",
+    "glob_search",
+}
+
 
 @dataclass(frozen=True)
 class CompactionOutput:
@@ -42,6 +56,7 @@ def compact_messages(
     *,
     turn_count: int = 0,
     manual_summary: str | None = None,
+    force_micro: bool = False,
 ) -> CompactionOutput:
     """Build the model-visible context for the next model call."""
 
@@ -51,9 +66,14 @@ def compact_messages(
         "context_window_tokens": policy.context_window_tokens,
         "micro_compact_threshold": policy.micro_compact_threshold,
         "auto_compact_threshold": policy.auto_compact_threshold,
+        "warning_threshold": policy.warning_threshold,
     }
 
-    micro_messages, compacted_count = micro_compact_tool_results(messages, policy)
+    micro_messages, compacted_count = micro_compact_tool_results(
+        messages,
+        policy,
+        force=force_micro,
+    )
     micro_tokens = estimate_messages_tokens(micro_messages)
     token_budget["after_micro_tokens"] = micro_tokens
 
@@ -88,7 +108,7 @@ def compact_messages(
             micro_compacted_tool_results=compacted_count,
         )
 
-    if compacted_count and original_tokens >= policy.micro_compact_threshold:
+    if compacted_count and (original_tokens >= policy.micro_compact_threshold or force_micro):
         return CompactionOutput(
             mode="micro",
             context_messages=micro_messages,
@@ -111,6 +131,8 @@ def compact_messages(
 def micro_compact_tool_results(
     messages: list[BaseMessage],
     policy: CompactionPolicy,
+    *,
+    force: bool = False,
 ) -> tuple[list[BaseMessage], int]:
     """Replace old bulky ToolMessage content with a compact marker."""
 
@@ -119,6 +141,7 @@ def micro_compact_tool_results(
         for index, message in enumerate(messages)
         if isinstance(message, ToolMessage)
     ]
+    tool_names = _tool_names_by_id(messages)
     keep_indexes = set(tool_indexes[-policy.keep_tool_results :])
     compacted = 0
     output: list[BaseMessage] = []
@@ -128,13 +151,29 @@ def micro_compact_tool_results(
         if (
             isinstance(cloned, ToolMessage)
             and index not in keep_indexes
-            and estimate_message_tokens(cloned) >= policy.min_tool_result_tokens
+            and _is_compactable_tool(tool_names.get(cloned.tool_call_id))
+            and (force or estimate_message_tokens(cloned) >= policy.min_tool_result_tokens)
         ):
             cloned.content = _compact_tool_content(str(cloned.content), policy)
             compacted += 1
         output.append(cloned)
 
     return output, compacted
+
+
+def _tool_names_by_id(messages: list[BaseMessage]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for message in messages:
+        for call in getattr(message, "tool_calls", None) or []:
+            if isinstance(call, dict) and call.get("id"):
+                names[call["id"]] = str(call.get("name", ""))
+    return names
+
+
+def _is_compactable_tool(name: str | None) -> bool:
+    if not name:
+        return False
+    return name in COMPACTABLE_TOOL_NAMES or name.startswith("mcp__")
 
 
 def split_recent_protocol_suffix(
@@ -217,6 +256,12 @@ def format_summary(summary: dict[str, Any]) -> str:
     if summary.get("model_summary"):
         lines.append("Model summary:")
         lines.append(str(summary["model_summary"]))
+    if summary.get("transcript_path"):
+        lines.append(f"Full transcript: {summary['transcript_path']}")
+    if summary.get("pre_compact_hooks"):
+        lines.append("PreCompact hooks:")
+        for hook in summary["pre_compact_hooks"]:
+            lines.append(f"- {hook.get('hook')}: {hook.get('content', '')}")
     lines.append("Completed actions:")
     lines.extend(f"- {item}" for item in summary.get("completed_actions", []) or ["None recorded"])
     lines.append("Key files:")

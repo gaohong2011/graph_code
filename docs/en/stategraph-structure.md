@@ -71,9 +71,9 @@ LangGraph uses this id to resume the same checkpoint after interrupts.
 | Node | Function | Responsibility |
 | --- | --- | --- |
 | `drain_notifications` | `drain_notifications` | Marks queued notifications before prompt/model work. |
-| `build_prompt` | `build_prompt` | Prompt assembly hook; current implementation records `prompt_built`. |
+| `build_prompt` | `build_prompt` | Pre-model context manager. It runs compact checks, builds `context_messages`, and records `prompt_built` when no compaction is needed. |
 | `call_model` | `call_model_node` -> `call_model` | Calls the configured chat model, validates tool-message protocol, or reuses pending tool calls. |
-| `recovery_handler` | `recovery_handler` | Handles model errors and transient retry routing before model response routing. |
+| `recovery_handler` | `recovery_handler` | Handles model errors, transient retry, and context-too-long reactive compact retry before model response routing. |
 | `route_model_response` | `lambda state: {}` | Empty node used as a named routing point after recovery. |
 | `permission_gate` | `permission_gate_node` -> `permission_gate` | Evaluates permissions and creates permission requests, denied envelopes, or executable calls. |
 | `human_permission_interrupt` | `human_permission_interrupt` | Calls LangGraph `interrupt()` and converts resume payloads into approved/denied tool state. |
@@ -81,7 +81,7 @@ LangGraph uses this id to resume the same checkpoint after interrupts.
 | `execute_tools` | `execute_tools_node` -> `execute_tools` | Runs approved tool calls through `ToolExecutionRuntime`. |
 | `run_post_tool_hooks` | `run_post_tool_hooks` | Post-tool hook point. |
 | `append_tool_results` | `append_tool_results` | Converts `ToolResultEnvelope` records into `ToolMessage` objects. |
-| `compact_check` | `compact_check` | Performs summary compaction when message history crosses the threshold. |
+| `compact_check` | `compact_check` | Runs micro, summary, manual, and reactive compaction; writes transcript/metadata and rehydrates runtime context. |
 | `recovery_handler_after_tools` | `recovery_handler` | Recovery hook after tool messages are appended and compaction runs. |
 | `final_response` | `final_response` | Produces the final user-visible response and ends the graph. |
 
@@ -105,7 +105,7 @@ Runs after `recovery_handler`.
 
 | Return | Next node | Meaning |
 | --- | --- | --- |
-| `retry` | `call_model` | A transient model/API error was recovered and should be retried within budget. |
+| `retry` | `call_model` | A transient model/API error or context-too-long error was recovered and should be retried within budget. |
 | `tools` | `permission_gate` | The model produced tool calls or pending tool calls already exist. |
 | `final` | `final_response` | The model produced normal content or an unrecoverable error exists. |
 
@@ -199,7 +199,11 @@ transition_reason = "model_error"
 
 ### 6. Context Compaction Loop
 
-After tool results are appended, `compact_check` may summarize long history. The graph then passes through `recovery_handler_after_tools` and returns to `call_model`.
+Before every provider call, `build_prompt` runs context management. It may micro-compact old tool results, create a summary boundary, write a transcript, run compact hooks, and rehydrate task/worktree/skill/MCP context into `context_messages`.
+
+After tool results are appended, `compact_check` runs again so large tool outputs can be compacted before the model sees the next turn. The graph then passes through `recovery_handler_after_tools` and returns to `call_model`.
+
+If the provider still returns a context-too-long error, `recovery_handler` consumes `recovery_state["context_retry_budget"]`, forces a reactive compact, clears the error, writes `transition_reason = "context_compact_retry"`, and routes back to `call_model`.
 
 ## Interrupt Payloads
 

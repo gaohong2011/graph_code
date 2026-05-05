@@ -71,9 +71,9 @@ LangGraph 使用该 id 在 interrupt 后恢复同一个 checkpoint。
 | Node | Function | 职责 |
 | --- | --- | --- |
 | `drain_notifications` | `drain_notifications` | 在 prompt/model 前标记待处理通知。 |
-| `build_prompt` | `build_prompt` | Prompt 组装 hook；当前实现记录 `prompt_built`。 |
+| `build_prompt` | `build_prompt` | 模型调用前的上下文管理节点。它会运行 compact 检查、构建 `context_messages`，无需压缩时记录 `prompt_built`。 |
 | `call_model` | `call_model_node` -> `call_model` | 调用配置的 chat model，校验 tool-message 协议，或复用 pending tool calls。 |
-| `recovery_handler` | `recovery_handler` | 在模型响应路由前处理模型错误和 transient retry。 |
+| `recovery_handler` | `recovery_handler` | 在模型响应路由前处理模型错误、transient retry 和 context-too-long reactive compact retry。 |
 | `route_model_response` | `lambda state: {}` | 空节点，用作 recovery 之后的具名路由点。 |
 | `permission_gate` | `permission_gate_node` -> `permission_gate` | 评估权限并创建审批请求、拒绝 envelope 或可执行调用。 |
 | `human_permission_interrupt` | `human_permission_interrupt` | 调用 LangGraph `interrupt()`，并把 resume payload 转为 approved/denied tool state。 |
@@ -81,7 +81,7 @@ LangGraph 使用该 id 在 interrupt 后恢复同一个 checkpoint。
 | `execute_tools` | `execute_tools_node` -> `execute_tools` | 通过 `ToolExecutionRuntime` 执行已批准工具调用。 |
 | `run_post_tool_hooks` | `run_post_tool_hooks` | 工具执行后 hook 点。 |
 | `append_tool_results` | `append_tool_results` | 把 `ToolResultEnvelope` 转为 `ToolMessage`。 |
-| `compact_check` | `compact_check` | 当 message history 超过阈值时执行 summary compaction。 |
+| `compact_check` | `compact_check` | 执行 micro、summary、manual 和 reactive compaction；写 transcript/metadata，并重新注入运行时上下文。 |
 | `recovery_handler_after_tools` | `recovery_handler` | tool message 回写和 compaction 后的 recovery hook。 |
 | `final_response` | `final_response` | 生成用户可见最终响应并结束 graph。 |
 
@@ -105,7 +105,7 @@ python -m graph_code.utils.export_graph_diagram --png
 
 | Return | Next node | 含义 |
 | --- | --- | --- |
-| `retry` | `call_model` | transient 模型/API 错误已恢复，应在预算内重试。 |
+| `retry` | `call_model` | transient 模型/API 错误或 context-too-long 错误已恢复，应在预算内重试。 |
 | `tools` | `permission_gate` | 模型产生了 tool calls，或已有 pending tool calls。 |
 | `final` | `final_response` | 模型产生普通内容，或存在不可恢复错误。 |
 
@@ -199,7 +199,11 @@ transition_reason = "model_error"
 
 ### 6. 上下文压缩循环
 
-tool result 追加后，`compact_check` 可能会总结长历史。随后 graph 经过 `recovery_handler_after_tools` 并回到 `call_model`。
+每次 provider 调用前，`build_prompt` 都会运行上下文管理。它可能 micro-compact 旧 tool result、创建 summary boundary、写 transcript、运行 compact hooks，并把 task/worktree/skill/MCP 等运行时上下文重新注入 `context_messages`。
+
+tool result 追加后，`compact_check` 会再次运行，确保大工具输出在下一次模型调用前被压缩。随后 graph 经过 `recovery_handler_after_tools` 并回到 `call_model`。
+
+如果 provider 仍返回 context-too-long，`recovery_handler` 会消费 `recovery_state["context_retry_budget"]`，强制 reactive compact，清空 error，写入 `transition_reason = "context_compact_retry"`，并路由回 `call_model`。
 
 ## Interrupt 载荷
 

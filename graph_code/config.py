@@ -48,6 +48,14 @@ class Config:
         self.compact_use_model_summary: bool = (
             os.getenv("COMPACT_USE_MODEL_SUMMARY", "true").lower() == "true"
         )
+        self.compact_warning_ratio: float = float(os.getenv("COMPACT_WARNING_RATIO", "0.65"))
+        self.compact_failure_circuit_breaker: int = int(
+            os.getenv("COMPACT_FAILURE_CIRCUIT_BREAKER", "3")
+        )
+        self.compact_summary_retry_budget: int = int(os.getenv("COMPACT_SUMMARY_RETRY_BUDGET", "1"))
+        self.time_based_microcompact_turn_gap: int = int(
+            os.getenv("TIME_BASED_MICROCOMPACT_TURN_GAP", "0")
+        )
 
         # Debug settings
         self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
@@ -87,6 +95,10 @@ class Config:
         config.micro_compact_min_tool_result_tokens = 128
         config.compact_message_count_threshold = 40
         config.compact_use_model_summary = False
+        config.compact_warning_ratio = 0.65
+        config.compact_failure_circuit_breaker = 3
+        config.compact_summary_retry_budget = 1
+        config.time_based_microcompact_turn_gap = 0
         config.debug = False
         config.debug_llm = False
         config.langsmith_api_key = None
