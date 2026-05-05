@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from langgraph.types import interrupt
 
 from ..config import Config, get_config
 from ..llm.client import get_llm
+from ..llm.protocol import validate_tool_message_protocol
 from ..tools.interaction import get_interaction_store
 from ..tools.permissions import (
     PermissionMode,
@@ -270,6 +272,13 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
         }
 
     messages = [SystemMessage(content=SYSTEM_PROMPT)] + state.get("messages", [])
+    protocol_errors = validate_tool_message_protocol(messages)
+    if protocol_errors:
+        return {
+            "error": "Invalid message protocol before model call: " + "; ".join(protocol_errors),
+            "transition_reason": "message_protocol_error",
+            "recovery_state": _consume_recovery_budget(state, "transient_retry_budget"),
+        }
     _sanitize_messages_for_utf8(messages)
 
     cfg = config or get_config()
@@ -304,6 +313,8 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
 
 
 def route_model_response(state: AgentState) -> str:
+    if state.get("transition_reason") == "transient_model_retry":
+        return "retry"
     if state.get("pending_tool_calls") or state.get("tool_calls"):
         return "tools"
     if state.get("error"):
@@ -454,7 +465,11 @@ def compact_check(state: AgentState) -> dict[str, Any]:
 
 
 def recovery_handler(state: AgentState) -> dict[str, Any]:
-    if state.get("error"):
+    error = state.get("error")
+    if error:
+        if _is_transient_model_error(str(error)) and _recovery_budget(state, "transient_retry_budget") > 0:
+            time.sleep(_transient_retry_delay(state))
+            return {"error": None, "transition_reason": "transient_model_retry"}
         return {"transition_reason": "recovery_budget_recorded"}
     return {"transition_reason": state.get("transition_reason")}
 
@@ -538,6 +553,33 @@ def _consume_recovery_budget(state: AgentState, key: str) -> dict[str, Any]:
     recovery = dict(state.get("recovery_state") or {})
     recovery[key] = max(0, int(recovery.get(key, 0)) - 1)
     return recovery
+
+
+def _recovery_budget(state: AgentState, key: str) -> int:
+    return int((state.get("recovery_state") or {}).get(key, 0))
+
+
+def _is_transient_model_error(error: str) -> bool:
+    normalized = error.lower()
+    markers = (
+        "429",
+        "rate limit",
+        "overloaded",
+        "temporarily",
+        "timeout",
+        "timed out",
+        "connection",
+        "network",
+        "server error",
+        "503",
+        "502",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _transient_retry_delay(state: AgentState) -> float:
+    remaining = _recovery_budget(state, "transient_retry_budget")
+    return min(2.0, 0.5 * (3 - remaining))
 
 
 def _summarize_messages(messages: list[Any]) -> dict[str, Any]:

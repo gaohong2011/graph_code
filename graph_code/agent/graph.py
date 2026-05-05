@@ -77,6 +77,7 @@ def build_agent(
         "route_model_response",
         route_model_response,
         {
+            "retry": "call_model",
             "tools": "permission_gate",
             "final": "final_response",
         },
