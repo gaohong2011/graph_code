@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.types import Command
 
 from ..config import Config, get_config
@@ -161,6 +161,7 @@ def run_agent(
                 continue
             for _node_name, node_output in event.items():
                 if isinstance(node_output, dict):
+                    _sync_state_update(state, node_output)
                     yield node_output
         else:
             yield event
@@ -180,6 +181,10 @@ async def run_agent_async(
     graph = build_agent(config=cfg)
     graph_config = {"configurable": {"thread_id": thread_id or "default"}}
     async for event in graph.astream(state, graph_config, stream_mode=stream_mode):
+        if stream_mode == "updates" and isinstance(event, dict):
+            for node_output in event.values():
+                if isinstance(node_output, dict):
+                    _sync_state_update(state, node_output)
         yield event
 
 
@@ -203,6 +208,7 @@ def resume_with_interaction(
         if isinstance(event, dict):
             for _node_name, node_output in event.items():
                 if isinstance(node_output, dict):
+                    _sync_state_update(state, node_output)
                     yield node_output
 
 
@@ -210,9 +216,25 @@ def resume_graph(
     resume: dict[str, Any] | str | bool,
     thread_id: str,
     config: Config | None = None,
+    state: AgentState | None = None,
 ) -> Iterator[Any]:
     """Resume a LangGraph interrupt with Command(resume=...)."""
     graph = build_agent(config=config)
     graph_config = {"configurable": {"thread_id": thread_id}}
     for event in graph.stream(Command(resume=resume), graph_config, stream_mode="updates"):
+        if state is not None and isinstance(event, dict):
+            for node_output in event.values():
+                if isinstance(node_output, dict):
+                    _sync_state_update(state, node_output)
         yield event
+
+
+def _sync_state_update(state: AgentState, update: dict[str, Any]) -> None:
+    """Keep caller-held state aligned with streamed LangGraph updates."""
+    for key, value in update.items():
+        if key not in state or key == "final_response":
+            continue
+        if key == "messages":
+            state["messages"] = add_messages(state["messages"], value)
+        else:
+            state[key] = value

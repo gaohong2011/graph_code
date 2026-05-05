@@ -167,12 +167,7 @@ def run_interactive(console: Console, args):
                         console,
                         auto_yes=args.yes or get_config().auto_confirm,
                     )
-                    for resume_event in resume_graph(resume_value, thread_id):
-                        for node_output in _iter_node_outputs(resume_event):
-                            if node_output.get("final_response"):
-                                console.print(f"\n[bold green]Graph Code:[/bold green]")
-                                format_message(node_output["final_response"], console)
-                                console.print()
+                    _resume_until_complete(resume_value, thread_id, state, console, args)
                     continue
 
                 # Update state (skip messages - managed by LangGraph internally)
@@ -234,10 +229,7 @@ def run_single_command(console: Console, args):
                     console,
                     auto_yes=args.yes or get_config().auto_confirm,
                 )
-                for resume_event in resume_graph(resume_value, thread_id):
-                    for node_output in _iter_node_outputs(resume_event):
-                        if node_output.get("final_response"):
-                            format_message(node_output["final_response"], console)
+                _resume_until_complete(resume_value, thread_id, state, console, args)
                 continue
 
             if isinstance(event, tuple):
@@ -280,12 +272,38 @@ def run_single_command(console: Console, args):
 
 def _iter_node_outputs(event):
     if isinstance(event, dict):
+        if any(isinstance(value, dict) for value in event.values()):
+            for value in event.values():
+                if isinstance(value, dict):
+                    yield value
+            return
         if "final_response" in event or "tool_results" in event:
             yield event
             return
-        for value in event.values():
-            if isinstance(value, dict):
-                yield value
+
+
+def _resume_until_complete(resume_value, thread_id, state, console: Console, args) -> list[str]:
+    """Resume a graph interrupt, handling any nested interrupts in sequence."""
+    finals: list[str] = []
+    next_resume = resume_value
+    while True:
+        nested_resume = None
+        for resume_event in resume_graph(next_resume, thread_id, state=state):
+            if isinstance(resume_event, dict) and "__interrupt__" in resume_event:
+                nested_resume = handle_graph_interrupt(
+                    resume_event,
+                    console,
+                    auto_yes=args.yes or get_config().auto_confirm,
+                )
+                break
+            for node_output in _iter_node_outputs(resume_event):
+                if node_output.get("final_response"):
+                    final = node_output["final_response"]
+                    finals.append(final)
+                    format_message(final, console)
+        if nested_resume is None:
+            return finals
+        next_resume = nested_resume
 
 
 def print_help(console: Console):

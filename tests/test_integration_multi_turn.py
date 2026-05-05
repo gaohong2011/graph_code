@@ -9,8 +9,9 @@ from unittest.mock import patch, MagicMock, call
 import pytest
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from graph_code.agent.graph import run_agent, resume_with_interaction
+from graph_code.agent.graph import build_agent, resume_graph, run_agent, resume_with_interaction
 from graph_code.agent.state import create_initial_state
+from graph_code.config import Config
 
 
 class TestMultiTurnConversation:
@@ -156,6 +157,39 @@ class TestToolCallMessageIntegrity:
 
             assert call_id == result_id, \
                 f"Tool call ID mismatch: {call_id} != {result_id}"
+
+    def test_resume_after_permission_syncs_tool_message_into_local_state(self, tmp_path):
+        """Regression for stale CLI state after approving an interrupted tool call."""
+        config = Config.for_tests(working_dir=tmp_path, model="mock")
+        thread_id = "permission-resume-sync"
+        tool_call = {
+            "id": "write:1",
+            "name": "write_file",
+            "args": {"file_path": "hello.py", "content": "print('hello')\n"},
+        }
+        state = create_initial_state(permission_mode="default")
+        state["messages"] = [
+            HumanMessage(content="write hello"),
+            AIMessage(content="", tool_calls=[tool_call]),
+        ]
+        state["pending_tool_calls"] = [tool_call]
+        state["tool_calls"] = [tool_call]
+
+        graph = build_agent(config=config)
+        events = list(
+            graph.stream(
+                state,
+                {"configurable": {"thread_id": thread_id}},
+                stream_mode="updates",
+            )
+        )
+        assert any("__interrupt__" in event for event in events)
+
+        list(resume_graph({"approved": True}, thread_id, config=config, state=state))
+
+        tool_messages = [message for message in state["messages"] if isinstance(message, ToolMessage)]
+        assert tool_messages
+        assert tool_messages[-1].tool_call_id == "write:1"
 
 
 class TestStateManagementInMain:
