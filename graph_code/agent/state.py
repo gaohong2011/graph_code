@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     turn_count: int
     transition_reason: str | None
     pending_tool_calls: list[dict[str, Any]]
+    approved_tool_calls: list[dict[str, Any]]
     pending_permission_request: dict[str, Any] | None
     tool_results: list[dict[str, Any]]
     planning_state: dict[str, Any]
@@ -58,6 +59,7 @@ def create_initial_state(permission_mode: str = "default") -> AgentState:
         "turn_count": 0,
         "transition_reason": None,
         "pending_tool_calls": [],
+        "approved_tool_calls": [],
         "pending_permission_request": None,
         "tool_results": [],
         "planning_state": {"status": "none", "approved": False},

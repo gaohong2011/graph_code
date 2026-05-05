@@ -114,6 +114,69 @@ def test_graph_interrupts_for_dangerous_bash_and_resumes_with_denial(tmp_path):
     assert "Permission denied" in tool_messages[-1].content
 
 
+def test_permission_interrupt_preserves_prior_allowed_tool_calls(tmp_path):
+    (tmp_path / "hello.txt").write_text("hello", encoding="utf-8")
+    graph = build_agent(config=Config.for_tests(working_dir=tmp_path, model="mock"))
+    thread = {"configurable": {"thread_id": "perm-mixed"}}
+    read_call = {
+        "id": "read_1",
+        "name": "read_file",
+        "args": {"file_path": "hello.txt"},
+    }
+    write_call = {
+        "id": "write_1",
+        "name": "write_file",
+        "args": {"file_path": "out.txt", "content": "ok"},
+    }
+    state = create_initial_state(permission_mode=PermissionMode.DEFAULT.value)
+    state["messages"] = [AIMessage(content="", tool_calls=[read_call, write_call])]
+    state["pending_tool_calls"] = [read_call, write_call]
+
+    interrupted = graph.invoke(state, thread, interrupt_before=())
+
+    assert "__interrupt__" in interrupted
+
+    resumed = graph.invoke(Command(resume={"approved": True}), thread)
+
+    tool_messages = [m for m in resumed["messages"] if isinstance(m, ToolMessage)]
+    assert {m.tool_call_id for m in tool_messages[-2:]} == {"read_1", "write_1"}
+
+
+def test_multiple_side_effect_tool_calls_require_separate_approvals(tmp_path):
+    graph = build_agent(config=Config.for_tests(working_dir=tmp_path, model="mock"))
+    thread = {"configurable": {"thread_id": "perm-multiple"}}
+    write_call = {
+        "id": "write_1",
+        "name": "write_file",
+        "args": {"file_path": "out.txt", "content": "ok"},
+    }
+    bash_call = {
+        "id": "bash_1",
+        "name": "bash",
+        "args": {"command": "touch should_not_exist"},
+    }
+    state = create_initial_state(permission_mode=PermissionMode.DEFAULT.value)
+    state["messages"] = [AIMessage(content="", tool_calls=[write_call, bash_call])]
+    state["pending_tool_calls"] = [write_call, bash_call]
+
+    first = graph.invoke(state, thread, interrupt_before=())
+
+    assert first["__interrupt__"][0].value["tool_name"] == "write_file"
+
+    second = graph.invoke(Command(resume={"approved": True}), thread)
+
+    assert "__interrupt__" in second
+    assert second["__interrupt__"][0].value["tool_name"] == "bash"
+
+    final = graph.invoke(Command(resume={"approved": False, "reason": "no bash"}), thread)
+
+    assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "ok"
+    assert not (tmp_path / "should_not_exist").exists()
+    tool_messages = [m for m in final["messages"] if isinstance(m, ToolMessage)]
+    assert {m.tool_call_id for m in tool_messages[-2:]} == {"write_1", "bash_1"}
+    assert "Permission denied" in tool_messages[-1].content
+
+
 def test_permission_gate_returns_denied_tool_result_without_crashing(tmp_path):
     state = create_initial_state(permission_mode=PermissionMode.AUTO.value)
     state["pending_tool_calls"] = [
@@ -142,6 +205,22 @@ def test_tool_runtime_persists_large_outputs_and_preserves_order(tmp_path):
     persisted = tmp_path / results[1].metadata["persisted_output"]
     assert persisted.exists()
     assert persisted.read_text().endswith("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def test_tool_runtime_preserves_read_write_execution_order(tmp_path):
+    (tmp_path / "state.txt").write_text("old", encoding="utf-8")
+    runtime = ToolExecutionRuntime(working_dir=tmp_path)
+    calls = [
+        {"id": "read_before", "name": "read_file", "args": {"file_path": "state.txt"}},
+        {"id": "write", "name": "write_file", "args": {"file_path": "state.txt", "content": "new"}},
+        {"id": "read_after", "name": "read_file", "args": {"file_path": "state.txt"}},
+    ]
+
+    results = runtime.execute(calls, permission_mode=PermissionMode.AUTO)
+
+    assert [result.tool_call_id for result in results] == ["read_before", "write", "read_after"]
+    assert "old" in results[0].content
+    assert "new" in results[2].content
 
 
 def test_append_tool_results_writes_tool_messages_with_envelopes():

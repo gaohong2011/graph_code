@@ -96,6 +96,7 @@ def build_agent(
         "human_permission_interrupt",
         route_after_human_permission,
         {
+            "permission": "permission_gate",
             "execute": "run_pre_tool_hooks",
             "append": "append_tool_results",
         },
@@ -144,14 +145,7 @@ def run_agent(
     if state is None:
         state = create_initial_state(permission_mode=cfg.permission_mode)
 
-    state["final_response"] = None
-    state["error"] = None
-    state["pending_question"] = False
-    state["pending_confirmation"] = False
-    state["pending_tool_calls"] = []
-    state["tool_calls"] = []
-    state["tool_results"] = []
-    state["messages"].append(HumanMessage(content=user_input))
+    _prepare_turn_state(state, user_input)
 
     graph = build_agent(config=cfg)
     graph_config = {"configurable": {"thread_id": thread_id or "default"}}
@@ -178,7 +172,7 @@ async def run_agent_async(
     cfg = config or get_config()
     if state is None:
         state = create_initial_state(permission_mode=cfg.permission_mode)
-    state["messages"].append(HumanMessage(content=user_input))
+    _prepare_turn_state(state, user_input)
     graph = build_agent(config=cfg)
     graph_config = {"configurable": {"thread_id": thread_id or "default"}}
     async for event in graph.astream(state, graph_config, stream_mode=stream_mode):
@@ -239,3 +233,16 @@ def _sync_state_update(state: AgentState, update: dict[str, Any]) -> None:
             state["messages"] = add_messages(state["messages"], value)
         else:
             state[key] = value
+
+
+def _prepare_turn_state(state: AgentState, user_input: str) -> None:
+    """Reset per-turn control state and append the new user message."""
+    state["final_response"] = None
+    state["error"] = None
+    state["pending_question"] = False
+    state["pending_confirmation"] = False
+    state["pending_tool_calls"] = []
+    state["approved_tool_calls"] = []
+    state["tool_calls"] = []
+    state["tool_results"] = []
+    state["messages"].append(HumanMessage(content=user_input))

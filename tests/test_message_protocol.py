@@ -62,6 +62,7 @@ def test_call_model_returns_local_protocol_error_before_provider_call(tmp_path):
     ]
     config = Config.for_tests(working_dir=tmp_path, model="real-model")
     config.llm_api_key = "test-key"
+    before_budget = state["recovery_state"]["transient_retry_budget"]
 
     with patch("graph_code.agent.nodes.get_llm") as mock_get_llm:
         mock_get_llm.return_value = MagicMock()
@@ -71,3 +72,5 @@ def test_call_model_returns_local_protocol_error_before_provider_call(tmp_path):
     mock_get_llm.assert_not_called()
     assert result["transition_reason"] == "message_protocol_error"
     assert "bash:2" in result["error"]
+    assert "recovery_state" not in result
+    assert state["recovery_state"]["transient_retry_budget"] == before_budget

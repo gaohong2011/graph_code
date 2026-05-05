@@ -156,3 +156,37 @@ class TestRunAgentAsync:
                 events.append(event)
 
         assert len(events) > 0
+
+    @pytest.mark.asyncio
+    async def test_async_clears_stale_turn_state(self):
+        """Async turns should reset the same per-turn state as sync turns."""
+        state = create_initial_state()
+        state["final_response"] = "old response"
+        state["error"] = "old error"
+        state["pending_tool_calls"] = [{"id": "old", "name": "bash", "args": {}}]
+        state["tool_calls"] = [{"id": "old", "name": "bash", "args": {}}]
+        state["tool_results"] = [{"ok": True, "content": "old"}]
+        state["pending_question"] = True
+        state["pending_confirmation"] = True
+
+        with patch("graph_code.agent.graph.build_agent") as mock_build:
+            mock_graph = MagicMock()
+            mock_build.return_value = mock_graph
+
+            async def mock_astream(*args, **kwargs):
+                yield {"agent": {"final_response": "new response"}}
+
+            mock_graph.astream = mock_astream
+
+            events = []
+            async for event in run_agent_async("new turn", state, "thread-1"):
+                events.append(event)
+
+        assert events
+        assert state["final_response"] is None
+        assert state["error"] is None
+        assert state["pending_tool_calls"] == []
+        assert state["tool_calls"] == []
+        assert state["tool_results"] == []
+        assert state["pending_question"] is False
+        assert state["pending_confirmation"] is False

@@ -277,7 +277,6 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
         return {
             "error": "Invalid message protocol before model call: " + "; ".join(protocol_errors),
             "transition_reason": "message_protocol_error",
-            "recovery_state": _consume_recovery_budget(state, "transient_retry_budget"),
         }
     _sanitize_messages_for_utf8(messages)
 
@@ -293,7 +292,6 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
             return {
                 "error": str(exc),
                 "transition_reason": "model_error",
-                "recovery_state": _consume_recovery_budget(state, "transient_retry_budget"),
             }
 
     _sanitize_message_for_utf8(response)
@@ -325,7 +323,7 @@ def route_model_response(state: AgentState) -> str:
 def permission_gate(state: AgentState, config: Config | None = None) -> dict[str, Any]:
     mode = state.get("permission_mode") or (config or get_config()).permission_mode
     pending = list(state.get("pending_tool_calls") or state.get("tool_calls") or [])
-    allowed: list[dict[str, Any]] = []
+    allowed: list[dict[str, Any]] = list(state.get("approved_tool_calls") or [])
     denied: list[dict[str, Any]] = []
 
     for index, tool_call in enumerate(pending):
@@ -342,6 +340,7 @@ def permission_gate(state: AgentState, config: Config | None = None) -> dict[str
         if decision.ask:
             return {
                 "pending_permission_request": build_permission_request(tool_call, decision),
+                "approved_tool_calls": allowed,
                 "pending_tool_calls": pending[index:],
                 "tool_calls": pending[index:],
                 "tool_results": denied,
@@ -352,6 +351,7 @@ def permission_gate(state: AgentState, config: Config | None = None) -> dict[str
     return {
         "pending_tool_calls": allowed,
         "tool_calls": allowed,
+        "approved_tool_calls": [],
         "tool_results": denied,
         "pending_permission_request": None,
         "transition_reason": "permission_checked",
@@ -362,6 +362,8 @@ def route_permission(state: AgentState) -> str:
     if state.get("pending_permission_request"):
         return "interrupt"
     if state.get("pending_tool_calls") or state.get("tool_calls"):
+        return "execute"
+    if state.get("approved_tool_calls"):
         return "execute"
     if state.get("tool_results"):
         return "append"
@@ -377,9 +379,12 @@ def human_permission_interrupt(state: AgentState) -> dict[str, Any]:
     reason = resume.get("reason", "") if isinstance(resume, dict) else ""
     call = request["tool_call"]
     remaining = list(state.get("pending_tool_calls") or [])
+    remaining = _remove_current_permission_call(remaining, request.get("tool_call_id"))
     if approved:
+        approved_calls = list(state.get("approved_tool_calls") or []) + [call]
         return {
             "pending_permission_request": None,
+            "approved_tool_calls": approved_calls,
             "pending_tool_calls": remaining,
             "tool_calls": remaining,
             "transition_reason": "permission_approved",
@@ -391,8 +396,8 @@ def human_permission_interrupt(state: AgentState) -> dict[str, Any]:
     ).model_dump()
     return {
         "pending_permission_request": None,
-        "pending_tool_calls": [],
-        "tool_calls": [],
+        "pending_tool_calls": remaining,
+        "tool_calls": remaining,
         "tool_results": list(state.get("tool_results") or []) + [denied],
         "transition_reason": "permission_denied",
     }
@@ -400,6 +405,8 @@ def human_permission_interrupt(state: AgentState) -> dict[str, Any]:
 
 def route_after_human_permission(state: AgentState) -> str:
     if state.get("pending_tool_calls") or state.get("tool_calls"):
+        return "permission"
+    if state.get("approved_tool_calls"):
         return "execute"
     return "append"
 
@@ -409,7 +416,12 @@ def run_pre_tool_hooks(state: AgentState) -> dict[str, Any]:
 
 
 def execute_tools(state: AgentState, config: Config | None = None) -> dict[str, Any]:
-    calls = state.get("pending_tool_calls") or state.get("tool_calls") or []
+    calls = (
+        state.get("pending_tool_calls")
+        or state.get("tool_calls")
+        or state.get("approved_tool_calls")
+        or []
+    )
     if not calls:
         return {}
     runtime = _runtime(config)
@@ -420,9 +432,13 @@ def execute_tools(state: AgentState, config: Config | None = None) -> dict[str, 
     )
     for call, result in zip(calls, results):
         log_tool_execution(call.get("name", "unknown"), call.get("args", {}), result.content)
-    merged = list(state.get("tool_results") or []) + [result.model_dump() for result in results]
+    merged = _merge_tool_results_in_call_order(
+        state,
+        [result.model_dump() for result in results],
+    )
     return {
         "pending_tool_calls": [],
+        "approved_tool_calls": [],
         "tool_calls": [],
         "tool_results": merged,
         "iteration_count": state.get("iteration_count", 0) + 1,
@@ -469,7 +485,11 @@ def recovery_handler(state: AgentState) -> dict[str, Any]:
     if error:
         if _is_transient_model_error(str(error)) and _recovery_budget(state, "transient_retry_budget") > 0:
             time.sleep(_transient_retry_delay(state))
-            return {"error": None, "transition_reason": "transient_model_retry"}
+            return {
+                "error": None,
+                "transition_reason": "transient_model_retry",
+                "recovery_state": _consume_recovery_budget(state, "transient_retry_budget"),
+            }
         return {"transition_reason": "recovery_budget_recorded"}
     return {"transition_reason": state.get("transition_reason")}
 
@@ -580,6 +600,45 @@ def _is_transient_model_error(error: str) -> bool:
 def _transient_retry_delay(state: AgentState) -> float:
     remaining = _recovery_budget(state, "transient_retry_budget")
     return min(2.0, 0.5 * (3 - remaining))
+
+
+def _remove_current_permission_call(
+    pending: list[dict[str, Any]],
+    tool_call_id: str | None,
+) -> list[dict[str, Any]]:
+    if not pending:
+        return []
+    if not tool_call_id:
+        return pending[1:]
+    for index, call in enumerate(pending):
+        if call.get("id") == tool_call_id:
+            return pending[:index] + pending[index + 1 :]
+    return pending[1:]
+
+
+def _merge_tool_results_in_call_order(
+    state: AgentState,
+    new_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    results = list(state.get("tool_results") or []) + new_results
+    order = _last_tool_call_order(state)
+    if not order:
+        return results
+    ordered_items = sorted(
+        enumerate(results),
+        key=lambda item: (order.get(item[1].get("tool_call_id"), len(order)), item[0]),
+    )
+    return [result for _index, result in ordered_items]
+
+
+def _last_tool_call_order(state: AgentState) -> dict[str, int]:
+    last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage)), None)
+    tool_calls = getattr(last_ai, "tool_calls", None) or []
+    return {
+        call.get("id"): index
+        for index, call in enumerate(tool_calls)
+        if isinstance(call, dict) and call.get("id")
+    }
 
 
 def _summarize_messages(messages: list[Any]) -> dict[str, Any]:

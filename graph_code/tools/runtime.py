@@ -84,23 +84,10 @@ class ToolExecutionRuntime:
         ordered: list[ToolResultEnvelope | None] = [None] * len(tool_calls)
         read_jobs: list[tuple[int, dict[str, Any]]] = []
 
-        for index, call in enumerate(tool_calls):
-            name = call.get("name", "")
-            if not skip_permissions:
-                decision = evaluate_permission(call, permission_mode)
-                if decision.denied:
-                    ordered[index] = self._denied(call, decision.reason)
-                    continue
-                if decision.ask:
-                    ordered[index] = self._denied(call, f"Permission required: {decision.reason}")
-                    continue
-
-            if name in READ_PARALLEL_TOOLS:
-                read_jobs.append((index, call))
-            else:
-                ordered[index] = self._execute_one(call)
-
-        if read_jobs:
+        def flush_read_jobs() -> None:
+            nonlocal read_jobs
+            if not read_jobs:
+                return
             with ThreadPoolExecutor(max_workers=min(8, len(read_jobs))) as pool:
                 futures = {
                     pool.submit(self._execute_one, call): index
@@ -108,6 +95,28 @@ class ToolExecutionRuntime:
                 }
                 for future, index in futures.items():
                     ordered[index] = future.result()
+            read_jobs = []
+
+        for index, call in enumerate(tool_calls):
+            name = call.get("name", "")
+            if not skip_permissions:
+                decision = evaluate_permission(call, permission_mode)
+                if decision.denied:
+                    flush_read_jobs()
+                    ordered[index] = self._denied(call, decision.reason)
+                    continue
+                if decision.ask:
+                    flush_read_jobs()
+                    ordered[index] = self._denied(call, f"Permission required: {decision.reason}")
+                    continue
+
+            if name in READ_PARALLEL_TOOLS:
+                read_jobs.append((index, call))
+            else:
+                flush_read_jobs()
+                ordered[index] = self._execute_one(call)
+
+        flush_read_jobs()
 
         return [result for result in ordered if result is not None]
 
