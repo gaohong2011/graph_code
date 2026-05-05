@@ -22,7 +22,7 @@ class DiagramExport:
 
 
 def export_stategraph_diagram(
-    output_dir: str | Path = "docs",
+    output_dir: str | Path = "docs/assets",
     *,
     write_png: bool = False,
     draw_method: MermaidDrawMethod = MermaidDrawMethod.API,
@@ -62,9 +62,9 @@ def export_stategraph_diagram(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export docs/stategraph-topology from the compiled LangGraph graph."
+        description="Export docs/assets/stategraph-topology from the compiled LangGraph graph."
     )
-    parser.add_argument("--output-dir", default="docs", help="Directory for generated files.")
+    parser.add_argument("--output-dir", default="docs/assets", help="Directory for generated files.")
     parser.add_argument("--png", action="store_true", help="Also render a PNG.")
     parser.add_argument(
         "--draw-method",
