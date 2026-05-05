@@ -1,5 +1,8 @@
 # Graph Code Architecture
 
+For a node-by-node view of the main LangGraph runtime, see
+[`stategraph-structure.md`](stategraph-structure.md).
+
 ## LangGraph Query Graph
 
 The main agent is a `StateGraph(AgentState)` compiled with a checkpointer and store. The graph uses `START`, `END`, `add_node`, `add_edge`, and `add_conditional_edges`.
@@ -11,9 +14,11 @@ START
   -> call_model
   -> recovery_handler
   -> route_model_response
+      -> retry -> call_model
       -> final_response -> END
       -> permission_gate
           -> human_permission_interrupt
+              -> permission_gate
           -> run_pre_tool_hooks
           -> execute_tools
           -> run_post_tool_hooks
