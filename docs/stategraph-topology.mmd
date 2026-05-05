@@ -1,0 +1,47 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	drain_notifications(drain_notifications)
+	build_prompt(build_prompt)
+	call_model(call_model)
+	recovery_handler(recovery_handler)
+	route_model_response(route_model_response)
+	permission_gate(permission_gate)
+	human_permission_interrupt(human_permission_interrupt)
+	run_pre_tool_hooks(run_pre_tool_hooks)
+	execute_tools(execute_tools)
+	run_post_tool_hooks(run_post_tool_hooks)
+	append_tool_results(append_tool_results)
+	compact_check(compact_check)
+	recovery_handler_after_tools(recovery_handler_after_tools)
+	final_response(final_response)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> drain_notifications;
+	append_tool_results --> compact_check;
+	build_prompt --> call_model;
+	call_model --> recovery_handler;
+	compact_check --> recovery_handler_after_tools;
+	drain_notifications --> build_prompt;
+	execute_tools --> run_post_tool_hooks;
+	human_permission_interrupt -. &nbsp;append&nbsp; .-> append_tool_results;
+	human_permission_interrupt -. &nbsp;permission&nbsp; .-> permission_gate;
+	human_permission_interrupt -. &nbsp;execute&nbsp; .-> run_pre_tool_hooks;
+	permission_gate -. &nbsp;append&nbsp; .-> append_tool_results;
+	permission_gate -. &nbsp;final&nbsp; .-> final_response;
+	permission_gate -. &nbsp;interrupt&nbsp; .-> human_permission_interrupt;
+	permission_gate -. &nbsp;execute&nbsp; .-> run_pre_tool_hooks;
+	recovery_handler --> route_model_response;
+	recovery_handler_after_tools --> call_model;
+	route_model_response -. &nbsp;retry&nbsp; .-> call_model;
+	route_model_response -. &nbsp;final&nbsp; .-> final_response;
+	route_model_response -. &nbsp;tools&nbsp; .-> permission_gate;
+	run_post_tool_hooks --> append_tool_results;
+	run_pre_tool_hooks --> execute_tools;
+	final_response --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

@@ -95,41 +95,17 @@ LangGraph uses this id to resume the same checkpoint after interrupts.
 
 ## Graph Topology
 
-![Graph Code StateGraph topology](stategraph-topology.svg)
+![Graph Code StateGraph topology](stategraph-topology.png)
 
-The SVG above is a readable visual summary for quick inspection. Some rare
-conditional exits are grouped in the image to keep the lines legible. The
-Mermaid source below is the exact text-editable topology.
+The PNG above is generated from the compiled LangGraph object, not drawn by
+hand. Regenerate both the Mermaid source and PNG with:
 
-```mermaid
-flowchart TD
-    START([START]) --> drain_notifications
-    drain_notifications --> build_prompt
-    build_prompt --> call_model
-    call_model --> recovery_handler
-    recovery_handler --> route_model_response
-
-    route_model_response -->|retry| call_model
-    route_model_response -->|tools| permission_gate
-    route_model_response -->|final| final_response
-
-    permission_gate -->|interrupt| human_permission_interrupt
-    permission_gate -->|execute| run_pre_tool_hooks
-    permission_gate -->|append| append_tool_results
-    permission_gate -->|final| final_response
-
-    human_permission_interrupt -->|permission| permission_gate
-    human_permission_interrupt -->|execute| run_pre_tool_hooks
-    human_permission_interrupt -->|append| append_tool_results
-
-    run_pre_tool_hooks --> execute_tools
-    execute_tools --> run_post_tool_hooks
-    run_post_tool_hooks --> append_tool_results
-    append_tool_results --> compact_check
-    compact_check --> recovery_handler_after_tools
-    recovery_handler_after_tools --> call_model
-    final_response --> END([END])
+```bash
+python -m graph_code.utils.export_graph_diagram --png
 ```
+
+The exact Mermaid source produced by `build_agent().get_graph().draw_mermaid()`
+is stored in [`stategraph-topology.mmd`](stategraph-topology.mmd).
 
 ## Route Functions
 

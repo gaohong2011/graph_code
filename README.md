@@ -94,6 +94,18 @@ python -m pytest -q
 python -m graph_code --mock "hello"
 ```
 
+## Graph Diagram
+
+The StateGraph topology image is generated from the compiled LangGraph graph:
+
+```bash
+python -m graph_code.utils.export_graph_diagram --png
+```
+
+This writes `docs/stategraph-topology.mmd` via
+`build_agent().get_graph().draw_mermaid()` and `docs/stategraph-topology.png`
+via `draw_mermaid_png()`.
+
 ## Real Model Run
 
 ```bash
