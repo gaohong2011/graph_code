@@ -101,6 +101,30 @@ def test_summary_compact_keeps_protocol_safe_recent_suffix(tmp_path):
     assert "README content" in context_text
 
 
+def test_summary_compact_can_use_no_tools_model_summary(tmp_path):
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old implementation detail " + ("x" * 4000)),
+        HumanMessage(content="current request"),
+    ]
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+    config.llm_model = "real-model"
+    config.llm_api_key = "test-key"
+    config.compact_use_model_summary = True
+
+    with patch("graph_code.agent.nodes.get_llm") as mock_get_llm:
+        mock_llm = MagicMock()
+        mock_get_llm.return_value = mock_llm
+        mock_llm.invoke.return_value = AIMessage(content="LLM compact summary")
+
+        result = compact_check(state, config=config)
+
+    mock_llm.bind_tools.assert_not_called()
+    mock_llm.invoke.assert_called_once()
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    assert "LLM compact summary" in context_text
+
+
 def test_call_model_uses_context_messages_when_available(tmp_path):
     state = create_initial_state()
     state["messages"] = [HumanMessage(content="full transcript should not be sent")]

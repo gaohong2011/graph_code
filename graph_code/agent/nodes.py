@@ -23,7 +23,12 @@ from ..tools.permissions import (
 from ..tools.runtime import ToolExecutionRuntime
 from ..tools.schema import ToolResultEnvelope
 from ..utils.debug import log_tool_execution
-from .compaction import compact_messages, get_compaction_policy
+from .compaction import (
+    CompactionOutput,
+    compact_messages,
+    format_summary,
+    get_compaction_policy,
+)
 from .state import AgentState
 
 
@@ -492,6 +497,7 @@ def compact_check(state: AgentState, config: Config | None = None) -> dict[str, 
         turn_count=state.get("turn_count", 0),
         manual_summary=manual_summary,
     )
+    compacted = _maybe_add_model_compact_summary(compacted, config or get_config())
 
     compact_state = _updated_compact_state(state, compacted)
     if compacted.mode == "summary":
@@ -666,6 +672,62 @@ def _last_tool_call_order(state: AgentState) -> dict[str, int]:
         for index, call in enumerate(tool_calls)
         if isinstance(call, dict) and call.get("id")
     }
+
+
+def _maybe_add_model_compact_summary(
+    compacted: CompactionOutput,
+    config: Config,
+) -> CompactionOutput:
+    if compacted.mode != "summary" or not compacted.summary:
+        return compacted
+    if config.llm_model == "mock" or not getattr(config, "compact_use_model_summary", True):
+        return compacted
+
+    model_summary = _generate_model_compact_summary(compacted.summary, config)
+    if not model_summary:
+        return compacted
+
+    summary = dict(compacted.summary)
+    summary["model_summary"] = model_summary
+    context_messages = list(compacted.context_messages)
+    if len(context_messages) >= 2:
+        context_messages[1] = HumanMessage(content=format_summary(summary))
+    return CompactionOutput(
+        mode=compacted.mode,
+        context_messages=context_messages,
+        summary=summary,
+        boundary_id=compacted.boundary_id,
+        token_budget=compacted.token_budget,
+        micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+    )
+
+
+def _generate_model_compact_summary(summary: dict[str, Any], config: Config) -> str | None:
+    prompt = (
+        "Summarize this coding-agent conversation state for continuation.\n"
+        "Return plain text only. Do not request tools. Preserve concrete files, "
+        "decisions, errors, completed actions, current work, and next step.\n\n"
+        f"Extractive state:\n{format_summary(summary)}"
+    )
+    try:
+        response = get_llm(config=config).invoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You are a context compaction summarizer. You have no tools. "
+                        "If you try to call tools, the compaction turn is wasted."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+    except Exception:
+        return None
+    content = getattr(response, "content", "")
+    if isinstance(content, str):
+        stripped = content.strip()
+        return stripped or None
+    return str(content).strip() or None
 
 
 def _updated_compact_state(state: AgentState, compacted: Any) -> dict[str, Any]:

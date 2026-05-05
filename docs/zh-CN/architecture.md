@@ -101,7 +101,9 @@ Summary compaction 保留：
 - 关键决策
 - 下一步
 
-大工具输出不会长期留在模型上下文；persisted output marker 会指向磁盘文件。可通过 `CONTEXT_WINDOW_TOKENS`、`MICRO_COMPACT_RATIO`、`AUTO_COMPACT_RATIO`、`COMPACT_RECENT_MESSAGES`、`MICRO_COMPACT_KEEP_TOOL_RESULTS` 和 `COMPACT_MESSAGE_COUNT_THRESHOLD` 调整策略。
+真实模型配置下，summary compact 会尝试调用一次无工具 summarizer；失败时回退本地 extractive summary，避免压缩失败打断主流程。
+
+大工具输出不会长期留在模型上下文；persisted output marker 会指向磁盘文件。可通过 `CONTEXT_WINDOW_TOKENS`、`MICRO_COMPACT_RATIO`、`AUTO_COMPACT_RATIO`、`COMPACT_RECENT_MESSAGES`、`MICRO_COMPACT_KEEP_TOOL_RESULTS`、`COMPACT_MESSAGE_COUNT_THRESHOLD` 和 `COMPACT_USE_MODEL_SUMMARY` 调整策略。
 
 ## 错误恢复
 

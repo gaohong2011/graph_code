@@ -101,7 +101,9 @@ Summary compaction preserves:
 - Key decisions
 - Next step
 
-Large tool output is not kept permanently in model context; persisted output markers point to disk. Tune behavior with `CONTEXT_WINDOW_TOKENS`, `MICRO_COMPACT_RATIO`, `AUTO_COMPACT_RATIO`, `COMPACT_RECENT_MESSAGES`, `MICRO_COMPACT_KEEP_TOOL_RESULTS`, and `COMPACT_MESSAGE_COUNT_THRESHOLD`.
+With a real model configuration, summary compact attempts one no-tools summarizer call. If that call fails, the graph falls back to the local extractive summary so compaction does not interrupt the main loop.
+
+Large tool output is not kept permanently in model context; persisted output markers point to disk. Tune behavior with `CONTEXT_WINDOW_TOKENS`, `MICRO_COMPACT_RATIO`, `AUTO_COMPACT_RATIO`, `COMPACT_RECENT_MESSAGES`, `MICRO_COMPACT_KEEP_TOOL_RESULTS`, `COMPACT_MESSAGE_COUNT_THRESHOLD`, and `COMPACT_USE_MODEL_SUMMARY`.
 
 ## Recovery
 

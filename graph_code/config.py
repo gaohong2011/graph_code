@@ -45,6 +45,9 @@ class Config:
         self.compact_message_count_threshold: int = int(
             os.getenv("COMPACT_MESSAGE_COUNT_THRESHOLD", "40")
         )
+        self.compact_use_model_summary: bool = (
+            os.getenv("COMPACT_USE_MODEL_SUMMARY", "true").lower() == "true"
+        )
 
         # Debug settings
         self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
@@ -83,6 +86,7 @@ class Config:
         config.micro_compact_preview_chars = 240
         config.micro_compact_min_tool_result_tokens = 128
         config.compact_message_count_threshold = 40
+        config.compact_use_model_summary = False
         config.debug = False
         config.debug_llm = False
         config.langsmith_api_key = None

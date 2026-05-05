@@ -213,8 +213,11 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"Boundary: {summary.get('boundary_id')}",
         f"Current goal: {summary.get('current_goal')}",
         f"Primary request: {summary.get('primary_request')}",
-        "Completed actions:",
     ]
+    if summary.get("model_summary"):
+        lines.append("Model summary:")
+        lines.append(str(summary["model_summary"]))
+    lines.append("Completed actions:")
     lines.extend(f"- {item}" for item in summary.get("completed_actions", []) or ["None recorded"])
     lines.append("Key files:")
     lines.extend(f"- {item}" for item in summary.get("key_files", []) or ["None recorded"])
