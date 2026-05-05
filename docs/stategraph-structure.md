@@ -95,6 +95,11 @@ LangGraph uses this id to resume the same checkpoint after interrupts.
 
 ## Graph Topology
 
+![Graph Code StateGraph topology](stategraph-topology.svg)
+
+The SVG above is a static image for quick visual inspection. The Mermaid source
+below is kept as the text-editable version of the same topology.
+
 ```mermaid
 flowchart TD
     START([START]) --> drain_notifications
