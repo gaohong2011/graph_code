@@ -1,162 +1,218 @@
-"""LangGraph builder and runner for Graph Code."""
+"""LangGraph builder and runners for Graph Code."""
 
-from typing import AsyncIterator, Iterator, Optional
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command
 
-from ..config import get_config
+from ..config import Config, get_config
 from .nodes import (
-    agent_node,
-    tools_node,
-    check_interaction_node,
-    handle_interaction_response,
-    should_continue,
+    append_tool_results,
+    build_prompt,
+    call_model,
+    compact_check,
+    drain_notifications,
+    execute_tools,
+    final_response,
+    human_permission_interrupt,
+    permission_gate,
+    recovery_handler,
+    route_after_human_permission,
+    route_model_response,
+    route_permission,
+    run_post_tool_hooks,
+    run_pre_tool_hooks,
 )
-from .state import GraphCodeState, create_initial_state
+from .persistence import create_checkpointer, create_store
+from .state import AgentState, create_initial_state
 
 
-def build_agent() -> StateGraph:
-    """Build the Graph Code agent as a LangGraph.
+_CHECKPOINTER = None
+_STORE = None
 
-    Returns:
-        Compiled StateGraph ready for execution.
-    """
-    # Create graph
-    workflow = StateGraph(GraphCodeState)
 
-    # Add nodes
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", tools_node)
-    workflow.add_node("check_interaction", check_interaction_node)
+def build_agent(
+    config: Config | None = None,
+    checkpointer: Any | None = None,
+    store: Any | None = None,
+):
+    """Build and compile the coding-agent StateGraph."""
+    cfg = config or get_config()
+    workflow = StateGraph(AgentState)
 
-    # Set entry point
-    workflow.set_entry_point("agent")
+    def call_model_node(state: AgentState) -> dict[str, Any]:
+        return call_model(state, config=cfg)
 
-    # Add conditional edges from agent
+    def permission_gate_node(state: AgentState) -> dict[str, Any]:
+        return permission_gate(state, config=cfg)
+
+    def execute_tools_node(state: AgentState) -> dict[str, Any]:
+        return execute_tools(state, config=cfg)
+
+    workflow.add_node("drain_notifications", drain_notifications)
+    workflow.add_node("build_prompt", build_prompt)
+    workflow.add_node("call_model", call_model_node)
+    workflow.add_node("recovery_handler", recovery_handler)
+    workflow.add_node("route_model_response", lambda state: {})
+    workflow.add_node("permission_gate", permission_gate_node)
+    workflow.add_node("human_permission_interrupt", human_permission_interrupt)
+    workflow.add_node("run_pre_tool_hooks", run_pre_tool_hooks)
+    workflow.add_node("execute_tools", execute_tools_node)
+    workflow.add_node("run_post_tool_hooks", run_post_tool_hooks)
+    workflow.add_node("append_tool_results", append_tool_results)
+    workflow.add_node("compact_check", compact_check)
+    workflow.add_node("recovery_handler_after_tools", recovery_handler)
+    workflow.add_node("final_response", final_response)
+
+    workflow.add_edge(START, "drain_notifications")
+    workflow.add_edge("drain_notifications", "build_prompt")
+    workflow.add_edge("build_prompt", "call_model")
+    workflow.add_edge("call_model", "recovery_handler")
+    workflow.add_edge("recovery_handler", "route_model_response")
     workflow.add_conditional_edges(
-        "agent",
-        should_continue,
+        "route_model_response",
+        route_model_response,
         {
-            "execute_tools": "tools",
-            "pause": "check_interaction",
-            "end": END,
-        }
+            "tools": "permission_gate",
+            "final": "final_response",
+        },
+    )
+    workflow.add_conditional_edges(
+        "permission_gate",
+        route_permission,
+        {
+            "interrupt": "human_permission_interrupt",
+            "execute": "run_pre_tool_hooks",
+            "append": "append_tool_results",
+            "final": "final_response",
+        },
+    )
+    workflow.add_conditional_edges(
+        "human_permission_interrupt",
+        route_after_human_permission,
+        {
+            "execute": "run_pre_tool_hooks",
+            "append": "append_tool_results",
+        },
+    )
+    workflow.add_edge("run_pre_tool_hooks", "execute_tools")
+    workflow.add_edge("execute_tools", "run_post_tool_hooks")
+    workflow.add_edge("run_post_tool_hooks", "append_tool_results")
+    workflow.add_edge("append_tool_results", "compact_check")
+    workflow.add_edge("compact_check", "recovery_handler_after_tools")
+    workflow.add_edge("recovery_handler_after_tools", "call_model")
+    workflow.add_edge("final_response", END)
+
+    return workflow.compile(
+        checkpointer=checkpointer or _default_checkpointer(cfg),
+        store=store or _default_store(cfg),
     )
 
-    # Add edge from tools back to agent
-    workflow.add_edge("tools", "agent")
 
-    # Add edge from check_interaction to END (pause for user)
-    workflow.add_edge("check_interaction", END)
+def _default_checkpointer(config: Config):
+    global _CHECKPOINTER
+    if config.checkpoint_backend != "memory":
+        return create_checkpointer(config)
+    if _CHECKPOINTER is None:
+        _CHECKPOINTER = create_checkpointer(config)
+    return _CHECKPOINTER
 
-    # Compile the graph
-    return workflow.compile()
+
+def _default_store(config: Config):
+    global _STORE
+    if _STORE is None:
+        _STORE = create_store(config)
+    if config.store_backend != "memory":
+        return create_store(config)
+    return _STORE
 
 
 def run_agent(
     user_input: str,
-    state: Optional[GraphCodeState] = None,
-    thread_id: Optional[str] = None,
-) -> Iterator[GraphCodeState]:
-    """Run the agent with user input.
-
-    Args:
-        user_input: The user's message
-        state: Optional existing state to continue from
-        thread_id: Optional thread ID for persistence
-
-    Yields:
-        State snapshots during execution
-    """
-    # Build agent
-    agent = build_agent()
-
-    # Initialize or use existing state
+    state: AgentState | None = None,
+    thread_id: str | None = None,
+    config: Config | None = None,
+    stream_mode: str | list[str] = "updates",
+) -> Iterator[Any]:
+    """Stream one user turn through the graph."""
+    cfg = config or get_config()
     if state is None:
-        state = create_initial_state()
+        state = create_initial_state(permission_mode=cfg.permission_mode)
 
-    # Clear temporary state fields from previous interactions
     state["final_response"] = None
     state["error"] = None
     state["pending_question"] = False
     state["pending_confirmation"] = False
-
-    # Add user message
+    state["pending_tool_calls"] = []
+    state["tool_calls"] = []
+    state["tool_results"] = []
     state["messages"].append(HumanMessage(content=user_input))
 
-    # Run the agent
-    config = {"configurable": {"thread_id": thread_id or "default"}}
-
-    for event in agent.stream(state, config):
-        if isinstance(event, dict):
-            # LangGraph returns events as {node_name: state_update}
-            # Extract the actual state update from the node output
-            for node_name, node_output in event.items():
+    graph = build_agent(config=cfg)
+    graph_config = {"configurable": {"thread_id": thread_id or "default"}}
+    for event in graph.stream(state, graph_config, stream_mode=stream_mode):
+        if stream_mode == "updates" and isinstance(event, dict):
+            if "__interrupt__" in event:
+                yield event
+                continue
+            for _node_name, node_output in event.items():
                 if isinstance(node_output, dict):
                     yield node_output
+        else:
+            yield event
 
 
 async def run_agent_async(
     user_input: str,
-    state: Optional[GraphCodeState] = None,
-    thread_id: Optional[str] = None,
-) -> AsyncIterator[GraphCodeState]:
-    """Run the agent asynchronously.
-
-    Args:
-        user_input: The user's message
-        state: Optional existing state to continue from
-        thread_id: Optional thread ID for persistence
-
-    Yields:
-        State snapshots during execution
-    """
-    # Build agent
-    agent = build_agent()
-
-    # Initialize or use existing state
+    state: AgentState | None = None,
+    thread_id: str | None = None,
+    config: Config | None = None,
+    stream_mode: str | list[str] = "updates",
+) -> AsyncIterator[Any]:
+    cfg = config or get_config()
     if state is None:
-        state = create_initial_state()
-
-    # Add user message
+        state = create_initial_state(permission_mode=cfg.permission_mode)
     state["messages"].append(HumanMessage(content=user_input))
-
-    # Run the agent
-    config = {"configurable": {"thread_id": thread_id or "default"}}
-
-    async for event in agent.astream(state, config):
-        if isinstance(event, dict):
-            yield event
+    graph = build_agent(config=cfg)
+    graph_config = {"configurable": {"thread_id": thread_id or "default"}}
+    async for event in graph.astream(state, graph_config, stream_mode=stream_mode):
+        yield event
 
 
 def resume_with_interaction(
-    state: GraphCodeState,
+    state: AgentState,
     user_response: str,
-    thread_id: Optional[str] = None,
-) -> Iterator[GraphCodeState]:
-    """Resume agent execution after user interaction.
+    thread_id: str | None = None,
+    config: Config | None = None,
+) -> Iterator[Any]:
+    """Compatibility helper for the old interaction-store flow."""
+    from .nodes import handle_interaction_response
 
-    Args:
-        state: The current state (paused at interaction)
-        user_response: The user's response
-        thread_id: Optional thread ID
-
-    Yields:
-        State snapshots during execution
-    """
-    # Update state with user response
-    updates = handle_interaction_response(state, user_response)
-    for key, value in updates.items():
-        if key == "messages":
-            state["messages"].extend(value)
-        else:
+    update = handle_interaction_response(state, user_response)
+    state["messages"].extend(update.get("messages", []))
+    for key, value in update.items():
+        if key != "messages":
             state[key] = value
-
-    # Build and run agent
-    agent = build_agent()
-    config = {"configurable": {"thread_id": thread_id or "default"}}
-
-    for event in agent.stream(state, config):
+    graph = build_agent(config=config)
+    graph_config = {"configurable": {"thread_id": thread_id or "default"}}
+    for event in graph.stream(state, graph_config, stream_mode="updates"):
         if isinstance(event, dict):
-            yield event
+            for _node_name, node_output in event.items():
+                if isinstance(node_output, dict):
+                    yield node_output
+
+
+def resume_graph(
+    resume: dict[str, Any] | str | bool,
+    thread_id: str,
+    config: Config | None = None,
+) -> Iterator[Any]:
+    """Resume a LangGraph interrupt with Command(resume=...)."""
+    graph = build_agent(config=config)
+    graph_config = {"configurable": {"thread_id": thread_id}}
+    for event in graph.stream(Command(resume=resume), graph_config, stream_mode="updates"):
+        yield event

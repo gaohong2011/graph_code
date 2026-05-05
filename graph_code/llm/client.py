@@ -8,7 +8,7 @@ from typing import Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from ..config import get_config
+from ..config import Config, get_config
 from ..utils.debug import get_debug_callbacks
 
 
@@ -17,6 +17,7 @@ def create_chat_model(
     base_url: Optional[str] = None,
     model: Optional[str] = None,
     temperature: float = 0.0,
+    config: Config | None = None,
 ) -> BaseChatModel:
     """Create a chat model instance.
 
@@ -29,7 +30,7 @@ def create_chat_model(
     Returns:
         BaseChatModel instance
     """
-    config = get_config()
+    config = config or get_config()
 
     api_key = api_key or config.llm_api_key
     base_url = base_url or config.llm_base_url
@@ -41,10 +42,12 @@ def create_chat_model(
     # Handle special cases for specific models
     extra_body = None
     if model and "kimi" in model.lower():
-        temperature = 1.0
-        # Disable thinking mode for kimi-k2.5 to avoid reasoning_content issues
-        if "k2.5" in model.lower() or "k2-thinking" in model.lower():
-            extra_body = {"enable_thinking": False}
+        model_lower = model.lower()
+        if "k2.5" in model_lower:
+            temperature = 0.6
+            extra_body = {"thinking": {"type": "disabled"}}
+        else:
+            temperature = 1.0
 
     # Get debug callbacks if debugging is enabled
     callbacks = get_debug_callbacks()
@@ -59,6 +62,6 @@ def create_chat_model(
     )
 
 
-def get_llm() -> BaseChatModel:
+def get_llm(config: Config | None = None) -> BaseChatModel:
     """Get the default LLM instance from config."""
-    return create_chat_model()
+    return create_chat_model(config=config)

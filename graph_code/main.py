@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 
-from .agent.graph import build_agent, resume_with_interaction, run_agent
+from .agent.graph import resume_graph, resume_with_interaction, run_agent
 from .agent.state import create_initial_state
 from .config import get_config
 from .tools.interaction import get_interaction_store
@@ -47,10 +47,14 @@ def setup_config(args) -> bool:
         config.llm_base_url = args.base_url
     if args.model:
         config.llm_model = args.model
+    if args.mock:
+        config.llm_model = "mock"
     if args.working_dir:
         config.working_dir = args.working_dir
     if args.auto_confirm:
         config.auto_confirm = True
+    if args.permission_mode:
+        config.permission_mode = args.permission_mode
 
     # Validate
     errors = config.validate()
@@ -96,6 +100,27 @@ def handle_pending_interaction(state, console: Console) -> Optional[str]:
     return None
 
 
+def handle_graph_interrupt(event: dict, console: Console, auto_yes: bool = False) -> dict:
+    """Ask the user to approve or deny a LangGraph interrupt."""
+    interrupts = event.get("__interrupt__") or []
+    interrupt_value = interrupts[0].value if interrupts else {}
+    tool_name = interrupt_value.get("tool_name", "unknown")
+    reason = interrupt_value.get("reason", "Permission required")
+    args = interrupt_value.get("args", {})
+
+    console.print("\n[yellow]Permission Required:[/yellow]")
+    console.print(f"Tool: {tool_name}")
+    console.print(f"Reason: {reason}")
+    if args:
+        console.print(f"Args: {args}")
+
+    approved = auto_yes or Confirm.ask("Approve?")
+    if approved:
+        return {"approved": True}
+    denial_reason = Prompt.ask("Reason", default="denied")
+    return {"approved": False, "reason": denial_reason}
+
+
 def format_message(content: str, console: Console):
     """Format and display message content."""
     # Try to detect and format code blocks
@@ -135,6 +160,20 @@ def run_interactive(console: Console, args):
 
             for event in run_agent(user_input, state, thread_id):
                 event_count += 1
+
+                if isinstance(event, dict) and "__interrupt__" in event:
+                    resume_value = handle_graph_interrupt(
+                        event,
+                        console,
+                        auto_yes=args.yes or get_config().auto_confirm,
+                    )
+                    for resume_event in resume_graph(resume_value, thread_id):
+                        for node_output in _iter_node_outputs(resume_event):
+                            if node_output.get("final_response"):
+                                console.print(f"\n[bold green]Graph Code:[/bold green]")
+                                format_message(node_output["final_response"], console)
+                                console.print()
+                    continue
 
                 # Update state (skip messages - managed by LangGraph internally)
                 for key, value in event.items():
@@ -183,7 +222,36 @@ def run_single_command(console: Console, args):
     console.print(f"[dim]Executing: {user_input}[/dim]\n")
 
     try:
-        for event in run_agent(user_input, state, thread_id):
+        for event in run_agent(
+            user_input,
+            state,
+            thread_id,
+            stream_mode=args.stream_mode,
+        ):
+            if isinstance(event, dict) and "__interrupt__" in event:
+                resume_value = handle_graph_interrupt(
+                    event,
+                    console,
+                    auto_yes=args.yes or get_config().auto_confirm,
+                )
+                for resume_event in resume_graph(resume_value, thread_id):
+                    for node_output in _iter_node_outputs(resume_event):
+                        if node_output.get("final_response"):
+                            format_message(node_output["final_response"], console)
+                continue
+
+            if isinstance(event, tuple):
+                mode, payload = event
+                if mode == "messages":
+                    console.print(payload)
+                elif mode == "custom":
+                    console.print(payload)
+                elif mode == "updates":
+                    for node_output in _iter_node_outputs(payload):
+                        if node_output.get("final_response"):
+                            format_message(node_output["final_response"], console)
+                continue
+
             # Update state
             for key, value in event.items():
                 if key in state:
@@ -208,6 +276,16 @@ def run_single_command(console: Console, args):
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
+
+
+def _iter_node_outputs(event):
+    if isinstance(event, dict):
+        if "final_response" in event or "tool_results" in event:
+            yield event
+            return
+        for value in event.values():
+            if isinstance(value, dict):
+                yield value
 
 
 def print_help(console: Console):
@@ -274,6 +352,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use the built-in mock model (no API key required)"
+    )
+
+    parser.add_argument(
         "--working-dir",
         "-w",
         help="Working directory (default: current directory)"
@@ -293,12 +377,27 @@ Examples:
     )
 
     parser.add_argument(
+        "--permission-mode",
+        choices=["default", "plan", "auto"],
+        default=None,
+        help="Tool permission mode"
+    )
+
+    parser.add_argument(
+        "--stream-mode",
+        default="updates",
+        help="LangGraph stream mode: updates, messages, custom, or comma-separated modes"
+    )
+
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="Answer yes to all confirmations (for single command mode)"
     )
 
     args = parser.parse_args()
+    if "," in args.stream_mode:
+        args.stream_mode = [item.strip() for item in args.stream_mode.split(",") if item.strip()]
 
     # Setup console
     console = Console()

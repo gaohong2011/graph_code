@@ -79,8 +79,8 @@ class TestCreateChatModel:
                 call_kwargs = mock_chat.call_args.kwargs
                 assert call_kwargs["temperature"] == 1.0
 
-    def test_create_chat_model_kimi_k25_disables_thinking(self):
-        """Test that kimi-k2.5 disables thinking mode."""
+    def test_create_chat_model_kimi_k25_uses_official_non_thinking_settings(self):
+        """Test that kimi-k2.5 uses Kimi's official non-thinking settings."""
         reset_config()
         with patch.dict("os.environ", {"LLM_API_KEY": "test-key"}, clear=True):
             with patch("graph_code.llm.client.ChatOpenAI") as mock_chat:
@@ -90,11 +90,11 @@ class TestCreateChatModel:
                 create_chat_model(model="kimi-k2.5")
 
                 call_kwargs = mock_chat.call_args.kwargs
-                assert call_kwargs["temperature"] == 1.0
-                assert call_kwargs["extra_body"] == {"enable_thinking": False}
+                assert call_kwargs["temperature"] == 0.6
+                assert call_kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
 
-    def test_create_chat_model_k2_thinking_disables_thinking(self):
-        """Test that kimi-k2-thinking-preview disables thinking mode."""
+    def test_create_chat_model_k2_thinking_keeps_thinking_enabled(self):
+        """Test that dedicated thinking models are not forced into non-thinking mode."""
         reset_config()
         with patch.dict("os.environ", {"LLM_API_KEY": "test-key"}, clear=True):
             with patch("graph_code.llm.client.ChatOpenAI") as mock_chat:
@@ -104,7 +104,8 @@ class TestCreateChatModel:
                 create_chat_model(model="kimi-k2-thinking-preview")
 
                 call_kwargs = mock_chat.call_args.kwargs
-                assert call_kwargs["extra_body"] == {"enable_thinking": False}
+                assert call_kwargs["temperature"] == 1.0
+                assert call_kwargs["extra_body"] is None
 
     def test_create_chat_model_non_kimi_no_extra_body(self):
         """Test that non-Kimi models don't have extra_body."""

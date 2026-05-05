@@ -1,9 +1,8 @@
 """Unit tests for agent.nodes module."""
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
-import pytest
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from graph_code.agent.nodes import (
     get_tools,
@@ -12,7 +11,6 @@ from graph_code.agent.nodes import (
     check_interaction_node,
     handle_interaction_response,
     should_continue,
-    _add_reasoning_content_to_messages,
 )
 from graph_code.agent.state import create_initial_state
 from graph_code.tools.interaction import get_interaction_store
@@ -25,42 +23,67 @@ class TestGetTools:
         """Test that get_tools returns a list of tools."""
         tools = get_tools()
         assert isinstance(tools, list)
-        assert len(tools) == 10
+        assert len(tools) >= 28
 
     def test_tools_have_names(self):
         """Test that all tools have names."""
         tools = get_tools()
         tool_names = [tool.name for tool in tools]
         expected_names = [
-            "_read_file", "_write_file", "_list_directory", "_glob_search",
-            "_grep_search", "_read_code_chunk",
-            "_bash_command", "_python_execute",
-            "_ask_user", "_confirm_action",
+            "read_file", "write_file", "edit_file", "bash", "search_files",
+            "todo", "load_skill", "compact", "save_memory",
+            "task_create", "task_update", "task_get", "task_list", "task_complete",
+            "background_run", "background_check",
+            "schedule_create", "schedule_list", "schedule_delete",
+            "team_spawn", "send_message", "request_shutdown", "submit_plan_approval",
+            "claim_task", "worktree_create", "worktree_enter", "worktree_run",
+            "worktree_closeout",
         ]
         for name in expected_names:
             assert name in tool_names
 
 
-class TestAddReasoningContent:
-    """Tests for _add_reasoning_content_to_messages function."""
+class TestAgentMessageSanitization:
+    """Tests for removing invalid Unicode from model message history."""
 
-    def test_adds_reasoning_content_to_ai_messages_with_tool_calls(self):
-        """Test that reasoning_content is added to AIMessages with tool_calls."""
-        msg = AIMessage(content="test", tool_calls=[{"id": "1", "name": "test_tool", "args": {}}])
-        messages = [msg]
+    def test_agent_node_sanitizes_surrogates_in_history_before_llm_call(self):
+        """Test that invalid surrogate characters are removed before API calls."""
+        state = create_initial_state()
+        state["messages"] = [AIMessage(content="bad \ud83d history")]
 
-        _add_reasoning_content_to_messages(messages)
+        with patch("graph_code.agent.nodes.get_llm") as mock_get_llm:
+            mock_llm = MagicMock()
+            mock_get_llm.return_value = mock_llm
 
-        assert msg.additional_kwargs.get("reasoning_content") == ""
+            def invoke(messages):
+                for message in messages:
+                    if isinstance(message.content, str):
+                        message.content.encode("utf-8")
+                return AIMessage(content="ok")
 
-    def test_does_not_add_to_messages_without_tool_calls(self):
-        """Test that messages without tool_calls are not modified."""
-        msg = AIMessage(content="test")
-        messages = [msg]
+            mock_llm.bind_tools.return_value.invoke.side_effect = invoke
 
-        _add_reasoning_content_to_messages(messages)
+            result = agent_node(state)
 
-        assert "reasoning_content" not in msg.additional_kwargs
+        assert result["final_response"] == "ok"
+        assert state["messages"][0].content == "bad ? history"
+
+    def test_agent_node_sanitizes_surrogates_in_model_response(self):
+        """Test that invalid surrogate characters are not stored in responses."""
+        state = create_initial_state()
+        state["messages"] = [HumanMessage(content="hi")]
+
+        with patch("graph_code.agent.nodes.get_llm") as mock_get_llm:
+            mock_llm = MagicMock()
+            mock_get_llm.return_value = mock_llm
+            mock_llm.bind_tools.return_value.invoke.return_value = AIMessage(
+                content="bad \ud83d response"
+            )
+
+            result = agent_node(state)
+
+        assert result["final_response"] == "bad ? response"
+        assert result["messages"][0].content == "bad ? response"
 
 
 class TestToolsNode:
@@ -79,17 +102,24 @@ class TestToolsNode:
             {"id": "call_1", "name": "_list_directory", "args": {"dir_path": "."}}
         ]
 
-        with patch("graph_code.agent.nodes.ToolNode") as mock_tool_node_class:
-            mock_tool_node = MagicMock()
-            mock_tool_node_class.return_value = mock_tool_node
-            mock_tool_node.invoke.return_value = {
-                "messages": [ToolMessage(content="Result", tool_call_id="call_1")]
-            }
-
-            result = tools_node(state)
+        result = tools_node(state)
 
         assert result["tool_calls"] == []
         assert result["iteration_count"] == 1
+
+    def test_does_not_mutate_assistant_tool_messages_with_reasoning_content(self):
+        """Test that tool execution does not add provider-specific message fields."""
+        state = create_initial_state()
+        assistant_message = AIMessage(
+            content="",
+            tool_calls=[{"id": "call_1", "name": "_list_directory", "args": {"dir_path": "."}}],
+        )
+        state["messages"].append(assistant_message)
+        state["tool_calls"] = assistant_message.tool_calls
+
+        tools_node(state)
+
+        assert "reasoning_content" not in assistant_message.additional_kwargs
 
 
 class TestCheckInteractionNode:
