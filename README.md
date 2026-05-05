@@ -31,6 +31,10 @@ export MAX_TOOL_ITERATIONS=10
 export OUTPUT_LIMIT=12000
 export CHECKPOINT_BACKEND=memory  # memory, sqlite, postgres
 export STORE_BACKEND=memory       # memory, postgres
+export CONTEXT_WINDOW_TOKENS=200000
+export AUTO_COMPACT_RATIO=0.82
+export MICRO_COMPACT_RATIO=0.68
+export COMPACT_RECENT_MESSAGES=12
 ```
 
 `LLM_MODEL=mock` uses the built-in mock model and does not require an API key.
@@ -88,6 +92,27 @@ Built-in tool calls all pass through the same Tool Router, Permission Gate, pre/
 - MCP routing: tool names shaped as `mcp__{server}__{tool}`
 
 Large tool outputs are written to `.agent/tool-outputs/`; the conversation keeps a preview plus a `[persisted-output: ...]` marker.
+
+## Context Compaction
+
+Graph Code keeps the full transcript in `AgentState.messages` and sends a separate `context_messages` list to the model. This keeps LangGraph checkpoint history intact while allowing the model-visible context to shrink.
+
+Compaction is layered:
+
+- Micro compact replaces old bulky `ToolMessage` content with `[old tool result compacted]`, while preserving `tool_call_id` protocol pairs.
+- Summary compact creates a compact boundary plus a structured summary, then keeps recent messages verbatim.
+- Manual compact requests from the `compact` tool route through the same `compact_check` node.
+
+Useful tuning knobs:
+
+```bash
+export CONTEXT_WINDOW_TOKENS=200000
+export MICRO_COMPACT_RATIO=0.68
+export AUTO_COMPACT_RATIO=0.82
+export COMPACT_RECENT_MESSAGES=12
+export MICRO_COMPACT_KEEP_TOOL_RESULTS=4
+export COMPACT_MESSAGE_COUNT_THRESHOLD=40
+```
 
 ## Mock Tests
 

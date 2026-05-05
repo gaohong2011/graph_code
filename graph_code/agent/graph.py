@@ -53,6 +53,9 @@ def build_agent(
     def execute_tools_node(state: AgentState) -> dict[str, Any]:
         return execute_tools(state, config=cfg)
 
+    def compact_check_node(state: AgentState) -> dict[str, Any]:
+        return compact_check(state, config=cfg)
+
     workflow.add_node("drain_notifications", drain_notifications)
     workflow.add_node("build_prompt", build_prompt)
     workflow.add_node("call_model", call_model_node)
@@ -64,7 +67,7 @@ def build_agent(
     workflow.add_node("execute_tools", execute_tools_node)
     workflow.add_node("run_post_tool_hooks", run_post_tool_hooks)
     workflow.add_node("append_tool_results", append_tool_results)
-    workflow.add_node("compact_check", compact_check)
+    workflow.add_node("compact_check", compact_check_node)
     workflow.add_node("recovery_handler_after_tools", recovery_handler)
     workflow.add_node("final_response", final_response)
 
@@ -245,4 +248,7 @@ def _prepare_turn_state(state: AgentState, user_input: str) -> None:
     state["approved_tool_calls"] = []
     state["tool_calls"] = []
     state["tool_results"] = []
-    state["messages"].append(HumanMessage(content=user_input))
+    message = HumanMessage(content=user_input)
+    state["messages"].append(message)
+    if state.get("context_messages"):
+        state["context_messages"].append(message)

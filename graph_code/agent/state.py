@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
+    context_messages: list[BaseMessage]
     turn_count: int
     transition_reason: str | None
     pending_tool_calls: list[dict[str, Any]]
@@ -56,6 +57,7 @@ def create_initial_state(permission_mode: str = "default") -> AgentState:
     """Create a fresh state with all required custom fields initialized."""
     return {
         "messages": [],
+        "context_messages": [],
         "turn_count": 0,
         "transition_reason": None,
         "pending_tool_calls": [],
@@ -63,7 +65,17 @@ def create_initial_state(permission_mode: str = "default") -> AgentState:
         "pending_permission_request": None,
         "tool_results": [],
         "planning_state": {"status": "none", "approved": False},
-        "compact_state": {"mode": "none", "summaries": [], "last_compacted_turn": 0},
+        "compact_state": {
+            "mode": "none",
+            "summaries": [],
+            "last_compacted_turn": 0,
+            "last_boundary_id": None,
+            "consecutive_failures": 0,
+            "token_budget": {},
+            "recent_messages_kept": 0,
+            "micro_compacted_tool_results": 0,
+            "compaction_history": [],
+        },
         "recovery_state": {
             "max_tokens_budget": 2,
             "context_retry_budget": 1,

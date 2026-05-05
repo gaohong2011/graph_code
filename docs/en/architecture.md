@@ -83,7 +83,17 @@ Skill bodies are not loaded into the prompt by default. The model sees the manif
 
 ## Context Compaction
 
-The graph supports micro, summary, and manual compaction. Summary compaction preserves:
+The graph supports micro, summary, and manual compaction. The full transcript stays in `AgentState.messages`, while model calls use a separate `context_messages` list. This keeps LangGraph checkpoints and transcripts intact while shrinking the context actually sent to the model.
+
+Compaction is layered:
+
+1. Token policy estimates current context size and records `compact_state.token_budget`.
+2. Micro compact first replaces old bulky `ToolMessage` content while preserving assistant `tool_calls` / `ToolMessage.tool_call_id` protocol pairs.
+3. If the context is still above the summary threshold, or the compatibility message-count threshold is reached, the graph creates a compact boundary plus a structured summary.
+4. Recent messages are kept verbatim after the summary; retained boundaries are protocol-grouped so a tool-call group is not cut in half.
+5. Manual compact requests from the `compact` tool run through the same `compact_check` path.
+
+Summary compaction preserves:
 
 - Current goal
 - Completed actions
@@ -91,7 +101,7 @@ The graph supports micro, summary, and manual compaction. Summary compaction pre
 - Key decisions
 - Next step
 
-Large tool output is not kept permanently in `messages`; persisted output markers point to disk.
+Large tool output is not kept permanently in model context; persisted output markers point to disk. Tune behavior with `CONTEXT_WINDOW_TOKENS`, `MICRO_COMPACT_RATIO`, `AUTO_COMPACT_RATIO`, `COMPACT_RECENT_MESSAGES`, `MICRO_COMPACT_KEEP_TOOL_RESULTS`, and `COMPACT_MESSAGE_COUNT_THRESHOLD`.
 
 ## Recovery
 

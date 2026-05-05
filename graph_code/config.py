@@ -30,6 +30,21 @@ class Config:
         self.checkpoint_uri: Optional[str] = os.getenv("CHECKPOINT_URI")
         self.store_backend: str = os.getenv("STORE_BACKEND", "memory")
         self.store_uri: Optional[str] = os.getenv("STORE_URI")
+        self.context_window_tokens: int = int(os.getenv("CONTEXT_WINDOW_TOKENS", "200000"))
+        self.auto_compact_ratio: float = float(os.getenv("AUTO_COMPACT_RATIO", "0.82"))
+        self.micro_compact_ratio: float = float(os.getenv("MICRO_COMPACT_RATIO", "0.68"))
+        self.compact_recent_messages: int = int(os.getenv("COMPACT_RECENT_MESSAGES", "12"))
+        self.micro_compact_keep_tool_results: int = int(
+            os.getenv("MICRO_COMPACT_KEEP_TOOL_RESULTS", "4")
+        )
+        self.compact_summary_max_chars: int = int(os.getenv("COMPACT_SUMMARY_MAX_CHARS", "12000"))
+        self.micro_compact_preview_chars: int = int(os.getenv("MICRO_COMPACT_PREVIEW_CHARS", "240"))
+        self.micro_compact_min_tool_result_tokens: int = int(
+            os.getenv("MICRO_COMPACT_MIN_TOOL_RESULT_TOKENS", "128")
+        )
+        self.compact_message_count_threshold: int = int(
+            os.getenv("COMPACT_MESSAGE_COUNT_THRESHOLD", "40")
+        )
 
         # Debug settings
         self.debug: bool = os.getenv("DEBUG", "false").lower() == "true"
@@ -59,6 +74,15 @@ class Config:
         config.checkpoint_uri = None
         config.store_backend = "memory"
         config.store_uri = None
+        config.context_window_tokens = 200000
+        config.auto_compact_ratio = 0.82
+        config.micro_compact_ratio = 0.68
+        config.compact_recent_messages = 12
+        config.micro_compact_keep_tool_results = 4
+        config.compact_summary_max_chars = 12000
+        config.micro_compact_preview_chars = 240
+        config.micro_compact_min_tool_result_tokens = 128
+        config.compact_message_count_threshold = 40
         config.debug = False
         config.debug_llm = False
         config.langsmith_api_key = None

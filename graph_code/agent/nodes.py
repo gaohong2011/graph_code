@@ -23,6 +23,7 @@ from ..tools.permissions import (
 from ..tools.runtime import ToolExecutionRuntime
 from ..tools.schema import ToolResultEnvelope
 from ..utils.debug import log_tool_execution
+from .compaction import compact_messages, get_compaction_policy
 from .state import AgentState
 
 
@@ -271,7 +272,8 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
             "transition_reason": "pending_tools_reused",
         }
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state.get("messages", [])
+    model_context = state.get("context_messages") or state.get("messages", [])
+    messages = [SystemMessage(content=SYSTEM_PROMPT)] + model_context
     protocol_errors = validate_tool_message_protocol(messages)
     if protocol_errors:
         return {
@@ -295,9 +297,11 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
             }
 
     _sanitize_message_for_utf8(response)
+    next_context = list(model_context) + [response]
     if getattr(response, "tool_calls", None):
         return {
             "messages": [response],
+            "context_messages": next_context,
             "pending_tool_calls": response.tool_calls,
             "tool_calls": response.tool_calls,
             "transition_reason": "model_requested_tools",
@@ -305,6 +309,7 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
 
     return {
         "messages": [response],
+        "context_messages": next_context,
         "final_response": response.content,
         "transition_reason": "model_final_response",
     }
@@ -463,21 +468,43 @@ def append_tool_results(state: AgentState) -> dict[str, Any]:
         )
     return {
         "messages": messages,
+        "context_messages": (
+            list(state.get("context_messages") or state.get("messages", [])) + messages
+        ),
         "tool_results": [],
         "transition_reason": "tool_results_appended",
     }
 
 
-def compact_check(state: AgentState) -> dict[str, Any]:
-    messages = state.get("messages", [])
-    if len(messages) < 40:
-        return {"transition_reason": "compact_not_needed"}
-    summary = _summarize_messages(messages)
-    compact_state = dict(state.get("compact_state") or {})
-    compact_state.setdefault("summaries", []).append(summary)
-    compact_state["mode"] = "summary"
-    compact_state["last_compacted_turn"] = state.get("turn_count", 0)
-    return {"compact_state": compact_state, "transition_reason": "summary_compact_complete"}
+def compact_check(state: AgentState, config: Config | None = None) -> dict[str, Any]:
+    messages = list(state.get("messages", []))
+    if not messages:
+        return {
+            "context_messages": [],
+            "transition_reason": "compact_not_needed",
+        }
+
+    manual_summary = _pending_manual_compact_summary(state)
+    policy = get_compaction_policy(config or get_config())
+    compacted = compact_messages(
+        messages,
+        policy,
+        turn_count=state.get("turn_count", 0),
+        manual_summary=manual_summary,
+    )
+
+    compact_state = _updated_compact_state(state, compacted)
+    if compacted.mode == "summary":
+        transition_reason = "summary_compact_complete"
+    elif compacted.mode == "micro":
+        transition_reason = "micro_compact_complete"
+    else:
+        transition_reason = "compact_not_needed"
+    return {
+        "context_messages": compacted.context_messages,
+        "compact_state": compact_state,
+        "transition_reason": transition_reason,
+    }
 
 
 def recovery_handler(state: AgentState) -> dict[str, Any]:
@@ -641,7 +668,59 @@ def _last_tool_call_order(state: AgentState) -> dict[str, int]:
     }
 
 
+def _updated_compact_state(state: AgentState, compacted: Any) -> dict[str, Any]:
+    compact_state = dict(state.get("compact_state") or {})
+    summaries = list(compact_state.get("summaries") or [])
+    history = list(compact_state.get("compaction_history") or [])
+    if compacted.summary:
+        summaries.append(compacted.summary)
+        compact_state["last_compacted_turn"] = state.get("turn_count", 0)
+        compact_state["last_boundary_id"] = compacted.boundary_id
+        compact_state["recent_messages_kept"] = len(compacted.context_messages)
+    compact_state["mode"] = compacted.mode
+    compact_state["summaries"] = summaries
+    compact_state["token_budget"] = compacted.token_budget
+    compact_state["micro_compacted_tool_results"] = compacted.micro_compacted_tool_results
+    compact_state["consecutive_failures"] = 0
+    history.append(
+        {
+            "mode": compacted.mode,
+            "turn_count": state.get("turn_count", 0),
+            "boundary_id": compacted.boundary_id,
+            "estimated_tokens": compacted.token_budget.get("estimated_tokens"),
+            "after_micro_tokens": compacted.token_budget.get("after_micro_tokens"),
+            "after_summary_tokens": compacted.token_budget.get("after_summary_tokens"),
+        }
+    )
+    compact_state["compaction_history"] = history[-20:]
+    return compact_state
+
+
+def _pending_manual_compact_summary(state: AgentState) -> str | None:
+    for item in state.get("tool_results", []) or []:
+        envelope = (
+            item
+            if isinstance(item, ToolResultEnvelope)
+            else ToolResultEnvelope.model_validate(item)
+        )
+        if envelope.metadata.get("tool_name") != "compact":
+            continue
+        try:
+            import json
+
+            payload = json.loads(envelope.content)
+        except Exception:
+            return envelope.content
+        if payload.get("mode") == "manual":
+            return payload.get("summary") or ""
+    return None
+
+
 def _summarize_messages(messages: list[Any]) -> dict[str, Any]:
+    policy = get_compaction_policy(get_config())
+    compacted = compact_messages(messages, policy, turn_count=0, manual_summary="")
+    if compacted.summary:
+        return compacted.summary
     return {
         "current_goal": "Continue the user's coding task",
         "completed_actions": [getattr(m, "type", type(m).__name__) for m in messages[-8:]],
