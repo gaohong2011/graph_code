@@ -36,147 +36,179 @@ def _runtime(config: Config | None = None) -> ToolExecutionRuntime:
 
 
 def get_tools() -> list[StructuredTool]:
-    """Return model-visible tools. Execution still goes through ToolExecutionRuntime."""
+    """Return model-visible tools backed by the same runtime as graph execution."""
 
     @lc_tool
     def read_file(file_path: str, offset: int = 0, limit: int | None = None) -> str:
         """Read a file from the workspace."""
-        return ""
+        return _invoke_schema_tool("read_file", file_path=file_path, offset=offset, limit=limit)
 
     @lc_tool
     def write_file(file_path: str, content: str, append: bool = False) -> str:
         """Write or append a file in the workspace."""
-        return ""
+        return _invoke_schema_tool("write_file", file_path=file_path, content=content, append=append)
 
     @lc_tool
     def edit_file(file_path: str, old: str, new: str, replace_all: bool = False) -> str:
         """Replace text in a file."""
-        return ""
+        return _invoke_schema_tool(
+            "edit_file",
+            file_path=file_path,
+            old=old,
+            new=new,
+            replace_all=replace_all,
+        )
 
     @lc_tool
     def bash(command: str, timeout: int = 60) -> str:
         """Run a shell command in the workspace."""
-        return ""
+        return _invoke_schema_tool("bash", command=command, timeout=timeout)
 
     @lc_tool
     def search_files(pattern: str, path: str = ".", glob: str | None = None) -> str:
         """Search files using a regex pattern."""
-        return ""
+        return _invoke_schema_tool("search_files", pattern=pattern, path=path, glob=glob)
 
     @lc_tool
     def todo(action: str = "list", items: list[dict[str, Any]] | None = None) -> str:
         """Read or set the todo list."""
-        return ""
+        return _invoke_schema_tool("todo", action=action, items=items)
 
     @lc_tool
     def load_skill(name: str, path: str | None = None) -> str:
         """Load a skill body by name or path."""
-        return ""
+        return _invoke_schema_tool("load_skill", name=name, path=path)
 
     @lc_tool
     def compact(mode: str = "manual", summary: str | None = None) -> str:
         """Request context compaction."""
-        return ""
+        return _invoke_schema_tool("compact", mode=mode, summary=summary)
 
     @lc_tool
     def save_memory(namespace: str, key: str, value: str) -> str:
         """Save long-term memory under namespace/key."""
-        return ""
+        return _invoke_schema_tool("save_memory", namespace=namespace, key=key, value=value)
 
     @lc_tool
     def task_create(subject: str, description: str = "", blocked_by: list[str] | None = None) -> str:
         """Create a persistent task."""
-        return ""
+        return _invoke_schema_tool(
+            "task_create",
+            subject=subject,
+            description=description,
+            blocked_by=blocked_by,
+        )
 
     @lc_tool
     def task_update(task_id: str, status: str | None = None, owner: str | None = None) -> str:
         """Update a persistent task."""
-        return ""
+        return _invoke_schema_tool("task_update", task_id=task_id, status=status, owner=owner)
 
     @lc_tool
     def task_get(task_id: str) -> str:
         """Read a task."""
-        return ""
+        return _invoke_schema_tool("task_get", task_id=task_id)
 
     @lc_tool
     def task_list() -> str:
         """List tasks."""
-        return ""
+        return _invoke_schema_tool("task_list")
 
     @lc_tool
     def task_complete(task_id: str) -> str:
         """Complete a task and unblock dependents."""
-        return ""
+        return _invoke_schema_tool("task_complete", task_id=task_id)
 
     @lc_tool
     def background_run(command: str, timeout: int = 3600) -> str:
         """Start a background command."""
-        return ""
+        return _invoke_schema_tool("background_run", command=command, timeout=timeout)
 
     @lc_tool
     def background_check(runtime_task_id: str) -> str:
         """Check a background command."""
-        return ""
+        return _invoke_schema_tool("background_check", runtime_task_id=runtime_task_id)
 
     @lc_tool
     def schedule_create(cron: str, prompt: str, recurring: bool = True, durable: bool = True) -> str:
         """Create a schedule that enqueues notifications when due."""
-        return ""
+        return _invoke_schema_tool(
+            "schedule_create",
+            cron=cron,
+            prompt=prompt,
+            recurring=recurring,
+            durable=durable,
+        )
 
     @lc_tool
     def schedule_list() -> str:
         """List due schedules as notifications."""
-        return ""
+        return _invoke_schema_tool("schedule_list")
 
     @lc_tool
     def schedule_delete(schedule_id: str) -> str:
         """Delete a schedule."""
-        return ""
+        return _invoke_schema_tool("schedule_delete", schedule_id=schedule_id)
 
     @lc_tool
     def team_spawn(name: str, role: str = "worker", prompt: str = "") -> str:
         """Spawn a teammate/subagent record."""
-        return ""
+        return _invoke_schema_tool("team_spawn", name=name, role=role, prompt=prompt)
 
     @lc_tool
     def send_message(teammate_id: str, content: str, request_id: str | None = None) -> str:
         """Send protocol message to a teammate inbox."""
-        return ""
+        return _invoke_schema_tool(
+            "send_message",
+            teammate_id=teammate_id,
+            content=content,
+            request_id=request_id,
+        )
 
     @lc_tool
     def request_shutdown(teammate_id: str, reason: str = "") -> str:
         """Request teammate shutdown."""
-        return ""
+        return _invoke_schema_tool("request_shutdown", teammate_id=teammate_id, reason=reason)
 
     @lc_tool
     def submit_plan_approval(request_id: str, approved: bool, notes: str = "") -> str:
         """Submit a plan approval response."""
-        return ""
+        return _invoke_schema_tool(
+            "submit_plan_approval",
+            request_id=request_id,
+            approved=approved,
+            notes=notes,
+        )
 
     @lc_tool
     def claim_task(task_id: str, owner: str) -> str:
         """Claim a task with a lock."""
-        return ""
+        return _invoke_schema_tool("claim_task", task_id=task_id, owner=owner)
 
     @lc_tool
     def worktree_create(task_id: str, base_path: str | None = None) -> str:
         """Create a worktree registry entry."""
-        return ""
+        return _invoke_schema_tool("worktree_create", task_id=task_id, base_path=base_path)
 
     @lc_tool
     def worktree_enter(worktree_id: str) -> str:
         """Enter a registered worktree."""
-        return ""
+        return _invoke_schema_tool("worktree_enter", worktree_id=worktree_id)
 
     @lc_tool
     def worktree_run(worktree_id: str, command: str, timeout: int = 60) -> str:
         """Run a command in a worktree."""
-        return ""
+        return _invoke_schema_tool(
+            "worktree_run",
+            worktree_id=worktree_id,
+            command=command,
+            timeout=timeout,
+        )
 
     @lc_tool
     def worktree_closeout(worktree_id: str, mode: str = "keep") -> str:
         """Close out a worktree, optionally removing it if clean."""
-        return ""
+        return _invoke_schema_tool("worktree_closeout", worktree_id=worktree_id, mode=mode)
 
     return [
         read_file,
@@ -208,6 +240,13 @@ def get_tools() -> list[StructuredTool]:
         worktree_run,
         worktree_closeout,
     ]
+
+
+def _invoke_schema_tool(name: str, **kwargs: Any) -> str:
+    """Execute a model-visible StructuredTool through the shared runtime."""
+    call = {"id": "schema-call", "name": name, "args": kwargs}
+    result = _runtime().execute([call], skip_permissions=True)[0]
+    return result.content
 
 
 def drain_notifications(state: AgentState) -> dict[str, Any]:

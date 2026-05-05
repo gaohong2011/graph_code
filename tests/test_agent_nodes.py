@@ -13,6 +13,7 @@ from graph_code.agent.nodes import (
     should_continue,
 )
 from graph_code.agent.state import create_initial_state
+from graph_code.config import Config
 from graph_code.tools.interaction import get_interaction_store
 
 
@@ -41,6 +42,22 @@ class TestGetTools:
         ]
         for name in expected_names:
             assert name in tool_names
+
+    def test_tool_wrappers_delegate_to_runtime(self, tmp_path):
+        """Model-visible StructuredTool wrappers should execute real runtime behavior."""
+        (tmp_path / "sample.txt").write_text("hello from runtime\n")
+        config = Config.for_tests(working_dir=tmp_path, model="mock")
+
+        with patch("graph_code.agent.nodes.get_config", return_value=config):
+            tools = {tool.name: tool for tool in get_tools()}
+            read_result = tools["read_file"].invoke({"file_path": "sample.txt"})
+            write_result = tools["write_file"].invoke(
+                {"file_path": "created.txt", "content": "created"}
+            )
+
+        assert "hello from runtime" in read_result
+        assert "Wrote file: created.txt" in write_result
+        assert (tmp_path / "created.txt").read_text() == "created"
 
 
 class TestAgentMessageSanitization:
