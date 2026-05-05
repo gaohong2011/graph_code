@@ -97,8 +97,9 @@ LangGraph uses this id to resume the same checkpoint after interrupts.
 
 ![Graph Code StateGraph topology](stategraph-topology.svg)
 
-The SVG above is a static image for quick visual inspection. The Mermaid source
-below is kept as the text-editable version of the same topology.
+The SVG above is a readable visual summary for quick inspection. Some rare
+conditional exits are grouped in the image to keep the lines legible. The
+Mermaid source below is the exact text-editable topology.
 
 ```mermaid
 flowchart TD
