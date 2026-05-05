@@ -112,7 +112,7 @@ def handle_graph_interrupt(event: dict, console: Console, auto_yes: bool = False
     console.print(f"Tool: {tool_name}")
     console.print(f"Reason: {reason}")
     if args:
-        console.print(f"Args: {args}")
+        _print_interrupt_args(args, console)
 
     approved = auto_yes or Confirm.ask("Approve?")
     if approved:
@@ -183,6 +183,8 @@ def run_interactive(console: Console, args):
                     console.print(f"\n[bold green]Graph Code:[/bold green]")
                     format_message(event["final_response"], console)
                     console.print()
+                else:
+                    _render_node_progress(event, console)
 
                 # Check for pending interaction
                 if event.get("pending_question") or event.get("pending_confirmation"):
@@ -242,6 +244,8 @@ def run_single_command(console: Console, args):
                     for node_output in _iter_node_outputs(payload):
                         if node_output.get("final_response"):
                             format_message(node_output["final_response"], console)
+                        else:
+                            _render_node_progress(node_output, console)
                 continue
 
             # Update state
@@ -252,6 +256,8 @@ def run_single_command(console: Console, args):
             # Check for final response
             if event.get("final_response"):
                 format_message(event["final_response"], console)
+            else:
+                _render_node_progress(event, console)
 
             # Handle pending interaction
             if event.get("pending_question") or event.get("pending_confirmation"):
@@ -301,9 +307,62 @@ def _resume_until_complete(resume_value, thread_id, state, console: Console, arg
                     final = node_output["final_response"]
                     finals.append(final)
                     format_message(final, console)
+                else:
+                    _render_node_progress(node_output, console)
         if nested_resume is None:
             return finals
         next_resume = nested_resume
+
+
+def _render_node_progress(node_output: dict, console: Console) -> None:
+    """Render concise progress updates for long graph phases."""
+    reason = node_output.get("transition_reason")
+    if reason == "permission_approved":
+        console.print("[dim]Permission approved. Resuming...[/dim]")
+        return
+    if reason == "permission_denied":
+        console.print("[dim]Permission denied. Continuing...[/dim]")
+        return
+    if reason == "transient_model_retry":
+        console.print("[dim]Model call was transiently unavailable. Retrying...[/dim]")
+        return
+    if reason == "tools_executed":
+        names = _tool_names_from_results(node_output.get("tool_results") or [])
+        label = ", ".join(names) if names else "tool"
+        console.print(f"[dim]Completed tool: {label}. Waiting for model response...[/dim]")
+
+
+def _tool_names_from_results(tool_results) -> list[str]:
+    names: list[str] = []
+    for result in tool_results:
+        metadata = result.get("metadata", {}) if isinstance(result, dict) else getattr(result, "metadata", {})
+        name = metadata.get("tool_name") if isinstance(metadata, dict) else None
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _preview_interrupt_args(args):
+    if isinstance(args, dict):
+        return {key: _preview_interrupt_args(value) for key, value in args.items()}
+    if isinstance(args, list):
+        preview = [_preview_interrupt_args(value) for value in args[:8]]
+        if len(args) > 8:
+            preview.append(f"... [truncated, {len(args)} items]")
+        return preview
+    if isinstance(args, str) and len(args) > 240:
+        return f"{args[:80]}... [truncated, {len(args)} chars]"
+    return args
+
+
+def _print_interrupt_args(args, console: Console) -> None:
+    console.print("Args:")
+    preview = _preview_interrupt_args(args)
+    if isinstance(preview, dict):
+        for key, value in preview.items():
+            console.print(f"  {key}: {value}", markup=False)
+        return
+    console.print(f"  {preview}", markup=False)
 
 
 def print_help(console: Console):
