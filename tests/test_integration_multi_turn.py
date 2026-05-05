@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from graph_code.agent.graph import build_agent, resume_graph, run_agent, resume_with_interaction
 from graph_code.agent.state import create_initial_state
 from graph_code.config import Config
+from graph_code.main import _sync_cli_state_from_event
 
 
 class TestMultiTurnConversation:
@@ -236,6 +237,48 @@ class TestStateManagementInMain:
             # Should have exactly 2 messages (one per turn)
             assert msg_count_after_second == 2, \
                 f"Expected 2 messages, got {msg_count_after_second}"
+
+    def test_main_style_state_update_does_not_duplicate_tool_results(self, tmp_path):
+        """Regression for orphan ToolMessages caused by duplicating tool_results."""
+        for index in range(8, 11):
+            (tmp_path / f"f{index}.txt").write_text(str(index), encoding="utf-8")
+
+        class FakeLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def bind_tools(self, _tools):
+                return self
+
+            def invoke(self, _messages):
+                self.calls += 1
+                if self.calls == 1:
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": f"read_file:{index}",
+                                "name": "read_file",
+                                "args": {"file_path": f"f{index}.txt"},
+                            }
+                            for index in range(8, 11)
+                        ],
+                    )
+                return AIMessage(content="done")
+
+        state = create_initial_state()
+        config = Config.for_tests(working_dir=tmp_path, model="real-model")
+        fake_llm = FakeLLM()
+
+        with patch("graph_code.agent.nodes.get_llm", return_value=fake_llm):
+            events = []
+            for event in run_agent("read files", state, "tool-results-dup", config=config):
+                events.append(event)
+                _sync_cli_state_from_event(state, event)
+
+        assert fake_llm.calls == 2
+        assert not any(event.get("transition_reason") == "message_protocol_error" for event in events)
+        assert state["final_response"] == "done"
 
     def test_old_bug_manual_message_merge_duplicates(self):
         """Demonstrate the old bug: manual message merging causes duplication.

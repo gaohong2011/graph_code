@@ -170,13 +170,7 @@ def run_interactive(console: Console, args):
                     _resume_until_complete(resume_value, thread_id, state, console, args)
                     continue
 
-                # Update state (skip messages - managed by LangGraph internally)
-                for key, value in event.items():
-                    if key in state and key != "messages":
-                        if key == "tool_results":
-                            state["tool_results"].extend(value)
-                        else:
-                            state[key] = value
+                _sync_cli_state_from_event(state, event)
 
                 # Check for final response
                 if event.get("final_response"):
@@ -192,9 +186,7 @@ def run_interactive(console: Console, args):
                     if interaction_result:
                         # Resume with interaction response
                         for resume_event in resume_with_interaction(state, interaction_result, thread_id):
-                            for key, value in resume_event.items():
-                                if key in state and key != "messages":
-                                    state[key] = value
+                            _sync_cli_state_from_event(state, resume_event)
 
                             if resume_event.get("final_response"):
                                 console.print(f"\n[bold green]Graph Code:[/bold green]")
@@ -286,6 +278,13 @@ def _iter_node_outputs(event):
         if "final_response" in event or "tool_results" in event:
             yield event
             return
+
+
+def _sync_cli_state_from_event(state: dict, event: dict) -> None:
+    """Mirror streamed control fields without mutating reducer-managed messages."""
+    for key, value in event.items():
+        if key in state and key != "messages":
+            state[key] = value
 
 
 def _resume_until_complete(resume_value, thread_id, state, console: Console, args) -> list[str]:
