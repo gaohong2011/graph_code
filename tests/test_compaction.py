@@ -13,6 +13,7 @@ from graph_code.agent.nodes import (
     build_prompt,
     call_model,
     compact_check,
+    execute_tools,
     recovery_handler,
 )
 from graph_code.agent.state import create_initial_state
@@ -357,6 +358,41 @@ def test_summary_compact_rehydrates_runtime_context(tmp_path):
     context_text = "\n".join(str(message.content) for message in result["context_messages"])
     for expected in ["task-123", "approved", "python", "wt-1", "fs", "connected"]:
         assert expected in context_text
+
+
+def test_execute_tools_records_recent_file_context(tmp_path):
+    (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    state = create_initial_state()
+    state["pending_tool_calls"] = [
+        {"id": "read-a", "name": "read_file", "args": {"file_path": "a.py"}}
+    ]
+
+    result = execute_tools(state, config=config)
+
+    recent = result["file_context_state"]["recent_files"]
+    assert recent[-1]["path"] == "a.py"
+    assert recent[-1]["tool"] == "read_file"
+    assert "print" in recent[-1]["preview"]
+
+
+def test_summary_compact_rehydrates_recent_file_context(tmp_path):
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+    state["file_context_state"]["recent_files"] = [
+        {"path": "a.py", "tool": "read_file", "preview": "def a(): pass", "turn": 1}
+    ]
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+
+    result = compact_check(state, config=config)
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    assert "Recent file context" in context_text
+    assert "a.py" in context_text
+    assert "def a" in context_text
 
 
 def test_summary_compact_writes_transcript_and_records_path(tmp_path):

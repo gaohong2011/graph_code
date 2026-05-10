@@ -96,6 +96,17 @@ def build_rehydration_text(
     notifications = state.get("notifications") or []
     if notifications:
         lines.append(f"- Notifications: {_json_preview(notifications[:5])}")
+    file_context = state.get("file_context_state") or {}
+    recent_files = file_context.get("recent_files") or []
+    if recent_files:
+        lines.append("- Recent file context:")
+        for item in recent_files[-5:]:
+            path = item.get("path", "unknown")
+            tool = item.get("tool", "unknown")
+            preview = str(item.get("preview", "")).replace("\n", "\\n")[:500]
+            persisted = item.get("persisted_output")
+            suffix = f" persisted={persisted}" if persisted else ""
+            lines.append(f"  - {path} via {tool}: {preview}{suffix}")
     if transcript_path:
         lines.append(f"- Full transcript: {transcript_path}")
     for hook in post_compact_hooks or []:

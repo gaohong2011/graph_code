@@ -485,6 +485,7 @@ def execute_tools(state: AgentState, config: Config | None = None) -> dict[str, 
         "approved_tool_calls": [],
         "tool_calls": [],
         "tool_results": merged,
+        "file_context_state": _updated_file_context_state(state, calls, results),
         "iteration_count": state.get("iteration_count", 0) + 1,
         "turn_count": state.get("turn_count", 0) + 1,
         "transition_reason": "tools_executed",
@@ -763,6 +764,42 @@ def _merge_tool_results_in_call_order(
         key=lambda item: (order.get(item[1].get("tool_call_id"), len(order)), item[0]),
     )
     return [result for _index, result in ordered_items]
+
+
+def _updated_file_context_state(
+    state: AgentState,
+    calls: list[dict[str, Any]],
+    results: list[ToolResultEnvelope],
+) -> dict[str, Any]:
+    file_state = dict(state.get("file_context_state") or {})
+    recent = list(file_state.get("recent_files") or [])
+    for call, result in zip(calls, results):
+        path = _file_path_from_call(call)
+        if not path:
+            continue
+        recent.append(
+            {
+                "path": path,
+                "tool": call.get("name", "unknown"),
+                "preview": str(result.content)[:1000],
+                "turn": state.get("turn_count", 0),
+                "persisted_output": result.metadata.get("persisted_output"),
+            }
+        )
+    file_state["recent_files"] = recent[-20:]
+    return file_state
+
+
+def _file_path_from_call(call: dict[str, Any]) -> str | None:
+    args = call.get("args") or {}
+    for key in ("file_path", "path"):
+        value = args.get(key)
+        if isinstance(value, str):
+            return value
+    if call.get("name") == "search_files":
+        value = args.get("path")
+        return value if isinstance(value, str) else None
+    return None
 
 
 def _last_tool_call_order(state: AgentState) -> dict[str, int]:
