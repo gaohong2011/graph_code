@@ -456,6 +456,21 @@ def test_build_prompt_compacts_long_context_before_model_call(tmp_path):
     assert result["compact_state"]["mode"] == "summary"
 
 
+def test_summary_compact_invalidates_prompt_cache(tmp_path):
+    state = create_initial_state()
+    state["prompt_state"]["cache"] = {"memory": "old"}
+    state["messages"] = [
+        HumanMessage(content="historical context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+    config = _compact_test_config(tmp_path)
+
+    result = build_prompt(state, config=config)
+
+    assert result["transition_reason"] == "summary_compact_complete"
+    assert result["system_prompt"]
+
+
 def test_manual_compact_request_survives_tool_result_append(tmp_path):
     state = create_initial_state()
     state["messages"] = [

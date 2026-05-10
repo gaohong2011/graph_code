@@ -36,6 +36,8 @@ from .compaction.runtime_context import (
     run_compact_hook,
     write_transcript,
 )
+from .prompt.builder import build_system_prompt
+from .prompt.cache import invalidate_prompt_cache
 from .state import AgentState
 
 
@@ -271,19 +273,36 @@ def drain_notifications(state: AgentState) -> dict[str, Any]:
 
 
 def build_prompt(state: AgentState, config: Config | None = None) -> dict[str, Any]:
-    compacted = compact_check(state, config=config)
+    cfg = config or get_config()
+    compacted = compact_check(state, config=cfg)
     if compacted.get("transition_reason") != "compact_not_needed":
+        prompt_input = {**state, **compacted}
+        prompt_input["prompt_state"] = invalidate_prompt_cache(prompt_input)
+        compacted["system_prompt"] = _safe_build_system_prompt(prompt_input, cfg)
+        compacted["prompt_state"] = prompt_input.get("prompt_state", {})
         return compacted
+    update: dict[str, Any] = {"transition_reason": "prompt_built"}
     if not state.get("context_messages"):
-        return {
-            "context_messages": list(state.get("messages", [])),
-            "transition_reason": "prompt_built",
-        }
-    return {"transition_reason": "prompt_built"}
+        update["context_messages"] = list(state.get("messages", []))
+    prompt_input = {**state, **update}
+    update["system_prompt"] = _safe_build_system_prompt(prompt_input, cfg)
+    update["prompt_state"] = prompt_input.get("prompt_state", {})
+    return update
+
+
+def _safe_build_system_prompt(state: AgentState | dict[str, Any], config: Config) -> str:
+    try:
+        return build_system_prompt(state, config)
+    except Exception as exc:
+        prompt_state = dict(state.get("prompt_state") or {})
+        prompt_state["last_error"] = f"{type(exc).__name__}: {exc}"
+        state["prompt_state"] = prompt_state
+        return SYSTEM_PROMPT
 
 
 def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any]:
     """Call the configured model unless pending tool calls already exist."""
+    cfg = config or get_config()
     pending = state.get("pending_tool_calls") or state.get("tool_calls")
     if pending:
         return {
@@ -293,7 +312,8 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
         }
 
     model_context = state.get("context_messages") or state.get("messages", [])
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + model_context
+    system_prompt = state.get("system_prompt") or _safe_build_system_prompt(state, cfg)
+    messages = [SystemMessage(content=system_prompt)] + model_context
     protocol_errors = validate_tool_message_protocol(messages)
     if protocol_errors:
         return {
@@ -302,7 +322,6 @@ def call_model(state: AgentState, config: Config | None = None) -> dict[str, Any
         }
     _sanitize_messages_for_utf8(messages)
 
-    cfg = config or get_config()
     if cfg.llm_model == "mock":
         content = _mock_response_content(state)
         response = AIMessage(content=content)
