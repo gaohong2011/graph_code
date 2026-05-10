@@ -45,7 +45,16 @@ def select_relevant_memories(query: str, config: Any, limit: int = 5) -> list[Pa
     names = payload.get("selected_memories") if isinstance(payload, dict) else []
     if not isinstance(names, list):
         return []
-    return [valid[name] for name in names[:limit] if isinstance(name, str) and name in valid]
+    selected: list[Path] = []
+    seen: set[str] = set()
+    for name in names:
+        if not isinstance(name, str) or name not in valid or name in seen:
+            continue
+        selected.append(valid[name])
+        seen.add(name)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def build_relevant_memory_context(paths: list[Path]) -> str:

@@ -615,12 +615,16 @@ def recovery_handler(state: AgentState, config: Config | None = None) -> dict[st
 
 def final_response(state: AgentState, config: Config | None = None) -> dict[str, Any]:
     response = state.get("final_response")
-    if not response:
-        if state.get("error"):
-            response = f"Error: {state['error']}"
-        else:
-            last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage)), None)
-            response = last_ai.content if last_ai else ""
+    if response:
+        update = {"final": True}
+        memory_update = _maybe_extract_explicit_memory(state, config or get_config())
+        update.update(memory_update)
+        return update
+    if state.get("error"):
+        response = f"Error: {state['error']}"
+    else:
+        last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage)), None)
+        response = last_ai.content if last_ai else ""
     update = {"final_response": response, "final": True}
     memory_update = _maybe_extract_explicit_memory(state, config or get_config())
     update.update(memory_update)

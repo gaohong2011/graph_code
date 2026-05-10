@@ -39,6 +39,30 @@ def test_relevance_selects_valid_memory_files(tmp_path):
     assert [item.name for item in selected] == ["testing.md"]
 
 
+def test_relevance_filters_invalid_model_choices_before_limit(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="real")
+    config.llm_api_key = "test-key"
+    config.memory_relevance_enabled = True
+    paths = memory_paths_for_project(config)
+    paths.memory_dir.mkdir(parents=True)
+    for name in ("one.md", "two.md"):
+        (paths.memory_dir / name).write_text(
+            f"---\nname: {name}\ndescription: policy\ntype: feedback\n---\nBody",
+            encoding="utf-8",
+        )
+
+    with patch("graph_code.agent.memory.relevance.get_llm") as mock_get_llm:
+        llm = MagicMock()
+        llm.invoke.return_value = AIMessage(
+            content='{"selected_memories": ["missing-a.md", "missing-b.md", "one.md", "two.md"]}'
+        )
+        mock_get_llm.return_value = llm
+
+        selected = select_relevant_memories("policy", config, limit=2)
+
+    assert [item.name for item in selected] == ["one.md", "two.md"]
+
+
 def test_build_relevant_memory_context_reads_selected_files(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     config.memory_relevance_enabled = True
