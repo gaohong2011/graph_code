@@ -469,6 +469,8 @@ def test_summary_compact_invalidates_prompt_cache(tmp_path):
 
     assert result["transition_reason"] == "summary_compact_complete"
     assert result["system_prompt"]
+    assert result["prompt_state"]["cache"].get("memory") != "old"
+    assert result["prompt_state"]["invalidated"] is False
 
 
 def test_manual_compact_request_survives_tool_result_append(tmp_path):

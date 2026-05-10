@@ -20,4 +20,5 @@ def invalidate_prompt_cache(state: dict[str, Any]) -> dict[str, Any]:
     prompt_state = dict(state.get("prompt_state") or {})
     prompt_state["cache"] = {}
     prompt_state["invalidated"] = True
+    state["prompt_state"] = prompt_state
     return prompt_state
