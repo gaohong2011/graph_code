@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from graph_code.agent.session_memory.compact import load_session_memory_for_compact
 from graph_code.agent.session_memory.prompt import DEFAULT_SESSION_MEMORY_TEMPLATE
@@ -30,6 +30,25 @@ def test_should_not_update_when_latest_assistant_has_tool_calls(tmp_path):
             tool_calls=[{"id": "call-1", "name": "read_file", "args": {"file_path": "a.py"}}],
         ),
     ]
+
+    assert should_update_session_memory(state, config) is False
+
+
+def test_should_not_update_when_latest_assistant_tool_call_has_tool_result(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.session_memory_enabled = True
+    config.session_memory_init_tokens = 10
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="x" * 100),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "call-1", "name": "read_file", "args": {"file_path": "a.py"}}],
+        ),
+        ToolMessage(content="tool result", tool_call_id="call-1"),
+    ]
+    state["pending_tool_calls"] = []
+    state["tool_calls"] = []
 
     assert should_update_session_memory(state, config) is False
 

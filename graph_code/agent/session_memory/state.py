@@ -14,8 +14,11 @@ def should_update_session_memory(state: dict[str, Any], config: Any) -> bool:
         return False
     if state.get("pending_tool_calls") or state.get("tool_calls") or state.get("pending_permission_request"):
         return False
-    last = state.get("messages", [])[-1:] or []
-    if last and isinstance(last[0], AIMessage) and getattr(last[0], "tool_calls", None):
+    latest_assistant = next(
+        (message for message in reversed(state.get("messages", [])) if isinstance(message, AIMessage)),
+        None,
+    )
+    if latest_assistant and getattr(latest_assistant, "tool_calls", None):
         return False
     current_tokens = estimate_messages_tokens(list(state.get("messages", [])))
     session_state = state.get("session_memory_state") or {}
