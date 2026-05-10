@@ -777,6 +777,7 @@ def _updated_file_context_state(
         path = _file_path_from_call(call)
         if not path:
             continue
+        is_error = _file_context_is_error(result)
         recent.append(
             {
                 "path": path,
@@ -784,6 +785,8 @@ def _updated_file_context_state(
                 "preview": str(result.content)[:1000],
                 "turn": state.get("turn_count", 0),
                 "persisted_output": result.metadata.get("persisted_output"),
+                "ok": result.ok and not is_error,
+                "is_error": is_error,
             }
         )
     file_state["recent_files"] = recent[-20:]
@@ -791,15 +794,22 @@ def _updated_file_context_state(
 
 
 def _file_path_from_call(call: dict[str, Any]) -> str | None:
+    name = call.get("name")
     args = call.get("args") or {}
-    for key in ("file_path", "path"):
-        value = args.get(key)
-        if isinstance(value, str):
-            return value
-    if call.get("name") == "search_files":
-        value = args.get("path")
+    if name in {"read_file", "write_file", "edit_file"}:
+        value = args.get("file_path")
         return value if isinstance(value, str) else None
+    if name == "search_files":
+        value = args.get("path")
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return value if normalized and normalized not in {".", "./"} else None
     return None
+
+
+def _file_context_is_error(result: ToolResultEnvelope) -> bool:
+    return result.is_error or str(result.content).startswith("Error:")
 
 
 def _last_tool_call_order(state: AgentState) -> dict[str, int]:

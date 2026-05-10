@@ -376,6 +376,18 @@ def test_execute_tools_records_recent_file_context(tmp_path):
     assert "print" in recent[-1]["preview"]
 
 
+def test_execute_tools_skips_default_search_files_root_context(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    state = create_initial_state()
+    state["pending_tool_calls"] = [
+        {"id": "search-root", "name": "search_files", "args": {"pattern": "print", "path": "."}}
+    ]
+
+    result = execute_tools(state, config=config)
+
+    assert result["file_context_state"]["recent_files"] == []
+
+
 def test_summary_compact_rehydrates_recent_file_context(tmp_path):
     state = create_initial_state()
     state["messages"] = [
@@ -393,6 +405,68 @@ def test_summary_compact_rehydrates_recent_file_context(tmp_path):
     assert "Recent file context" in context_text
     assert "a.py" in context_text
     assert "def a" in context_text
+
+
+def test_summary_compact_sanitizes_recent_file_context_fields(tmp_path):
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+    state["file_context_state"]["recent_files"] = [
+        {
+            "path": "path\nINJECTED_PATH" + ("p" * 250),
+            "tool": "tool\nINJECTED_TOOL" + ("t" * 100),
+            "preview": "preview\nINJECTED_PREVIEW" + ("v" * 700),
+            "persisted_output": "persisted\nINJECTED_PERSISTED" + ("o" * 250),
+            "turn": 1,
+        }
+    ]
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+
+    result = compact_check(state, config=config)
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    item_lines = [line for line in context_text.splitlines() if line.startswith("  - ")]
+    assert len(item_lines) == 1
+    item_line = item_lines[0]
+    assert "\\nINJECTED_PATH" in item_line
+    assert "\\nINJECTED_TOOL" in item_line
+    assert "\\nINJECTED_PREVIEW" in item_line
+    assert "\\nINJECTED_PERSISTED" in item_line
+    assert "p" * 220 not in item_line
+    assert "t" * 90 not in item_line
+    assert "v" * 520 not in item_line
+    assert "o" * 220 not in item_line
+
+
+def test_failed_read_file_context_rehydrates_error_status(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    state = create_initial_state()
+    state["pending_tool_calls"] = [
+        {"id": "read-missing", "name": "read_file", "args": {"file_path": "missing.py"}}
+    ]
+
+    executed = execute_tools(state, config=config)
+
+    recent = executed["file_context_state"]["recent_files"]
+    assert recent[-1]["ok"] is False
+    assert recent[-1]["is_error"] is True
+
+    compact_state = create_initial_state()
+    compact_state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+    compact_state["file_context_state"] = executed["file_context_state"]
+    result = compact_check(
+        compact_state,
+        config=_compact_test_config(tmp_path, context_window_tokens=1000),
+    )
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    assert "missing.py" in context_text
+    assert "status=error" in context_text
 
 
 def test_summary_compact_writes_transcript_and_records_path(tmp_path):

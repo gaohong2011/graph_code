@@ -101,11 +101,15 @@ def build_rehydration_text(
     if recent_files:
         lines.append("- Recent file context:")
         for item in recent_files[-5:]:
-            path = item.get("path", "unknown")
-            tool = item.get("tool", "unknown")
-            preview = str(item.get("preview", "")).replace("\n", "\\n")[:500]
+            path = _line_field(item.get("path", "unknown"), 200)
+            tool = _line_field(item.get("tool", "unknown"), 80)
+            preview = _line_field(item.get("preview", ""), 500)
             persisted = item.get("persisted_output")
-            suffix = f" persisted={persisted}" if persisted else ""
+            persisted_text = _line_field(persisted, 200) if persisted else ""
+            status = "error" if item.get("is_error") else "ok"
+            suffix = f" status={status}"
+            if persisted_text:
+                suffix += f" persisted={persisted_text}"
             lines.append(f"  - {path} via {tool}: {preview}{suffix}")
     if transcript_path:
         lines.append(f"- Full transcript: {transcript_path}")
@@ -128,3 +132,8 @@ def _json_preview(value: Any, limit: int = 2000) -> str:
     if len(rendered) <= limit:
         return rendered
     return rendered[: limit - 3] + "..."
+
+
+def _line_field(value: Any, limit: int) -> str:
+    rendered = str(value).replace("\n", "\\n").replace("\r", "\\r")
+    return rendered[:limit]
