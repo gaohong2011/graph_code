@@ -72,14 +72,23 @@ Permission Gate 的判断顺序：
 
 Prompt 由稳定分段组成：
 
-- Core behavior
-- Tool manifest
-- Skills manifest
-- Long-term memory
+- Identity
+- Task behavior
+- Tool behavior
+- Context behavior
 - Project instructions
-- Dynamic context
+- Memory
+- Environment
 
-Skill 正文默认不会加载进 prompt。模型先看到 manifest，需要完整正文时调用 `load_skill`。长期 memory 通过 namespace/key 访问，本地 runtime 存在 `.agent/memory/`；graph compile 路径也提供 LangGraph store，供生产后端替换。
+静态 prompt 分段可以缓存复用，但动态分段会按需重建。Project instructions、memory 内容和 environment 信息会刷新，因此压缩或恢复后的运行会看到当前 instructions、当前 memory 和当前工作区上下文，而不是永久冻结的 prompt。
+
+Project instructions 使用 Claude Code 风格布局。Prompt builder 会从当前工作区加载 `CLAUDE.md`、`.claude/CLAUDE.md` 和 `.claude/rules/*.md`，并放入 project-instructions 分段。
+
+长期 memory 默认基于文件。每个项目的 memory root 位于 `~/.graph-code/projects/<project-key>/memory/`，也可以通过 `GRAPH_CODE_MEMORY_DIR` 覆盖。`MEMORY.md` 是索引文件，topic 文件包含 `name`、`description`、`type` 和 `updated_at` frontmatter。文件工具会在运行时校验路径只能落在当前 workspace 或配置的 memory root 内，因此可以安全读写 memory 文件，而不会放开整个文件系统。
+
+Session memory 是可选能力，默认关闭。设置 `ENABLE_SESSION_MEMORY=true` 后，Graph Code 可以维护 `~/.graph-code/projects/<project-key>/session-memory/session.md`；存在时，它可以作为优先的 compact 来源，然后再回退到模型 summary 或 extractive summary。Memory relevance 和 automatic memory extraction 也默认关闭，分别由 `ENABLE_MEMORY_RELEVANCE` 和 `ENABLE_AUTO_MEMORY_EXTRACTION` 控制。
+
+Skill 正文默认不会加载进 prompt。模型先看到 manifest，需要完整正文时调用 `load_skill`。
 
 ## 上下文压缩
 

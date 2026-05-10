@@ -36,6 +36,15 @@ export AUTO_COMPACT_RATIO=0.82
 export MICRO_COMPACT_RATIO=0.68
 export COMPACT_RECENT_MESSAGES=12
 export COMPACT_USE_MODEL_SUMMARY=true
+export GRAPH_CODE_HOME=~/.graph-code
+export GRAPH_CODE_MEMORY_DIR=/path/to/memory   # optional override
+export GRAPH_CODE_DISABLE_MEMORY=false
+export ENABLE_MEMORY_RELEVANCE=false
+export ENABLE_SESSION_MEMORY=false
+export ENABLE_AUTO_MEMORY_EXTRACTION=false
+export SESSION_MEMORY_INIT_TOKENS=10000
+export SESSION_MEMORY_UPDATE_TOKENS=5000
+export SESSION_MEMORY_TOOL_CALLS=3
 ```
 
 `LLM_MODEL=mock` uses the built-in mock model and does not require an API key.
@@ -122,6 +131,20 @@ export COMPACT_FAILURE_CIRCUIT_BREAKER=3
 export COMPACT_SUMMARY_RETRY_BUDGET=1
 export TIME_BASED_MICROCOMPACT_TURN_GAP=0
 ```
+
+## Prompt And Memory
+
+The system prompt is assembled from stable sections for identity, task behavior, tool behavior, context behavior, project instructions, memory, and environment. Dynamic project instruction, memory, and environment sections are refreshed as context changes.
+
+Project instructions are loaded from Claude Code-style files in the workspace:
+
+- `CLAUDE.md`
+- `.claude/CLAUDE.md`
+- `.claude/rules/*.md`
+
+Long-term project memory is file-based by default under `~/.graph-code/projects/<project-key>/memory/`, or under `GRAPH_CODE_MEMORY_DIR` when that override is set. `MEMORY.md` is the index file. Topic files use frontmatter with `name`, `description`, `type`, and `updated_at`.
+
+Session memory and automatic memory extraction are disabled by default. Enable them with `ENABLE_SESSION_MEMORY=true` and `ENABLE_AUTO_MEMORY_EXTRACTION=true` when you want compact summaries or extracted facts to update memory automatically.
 
 ## Mock Tests
 

@@ -72,14 +72,23 @@ Read-only tools can run concurrently. Write tools, bash, and worktree operations
 
 The prompt is assembled from stable sections:
 
-- Core behavior
-- Tool manifest
-- Skills manifest
-- Long-term memory
+- Identity
+- Task behavior
+- Tool behavior
+- Context behavior
 - Project instructions
-- Dynamic context
+- Memory
+- Environment
 
-Skill bodies are not loaded into the prompt by default. The model sees the manifest and calls `load_skill` when it needs a full body. Long-term memory is addressed by namespace/key and stored under `.agent/memory/` in the local runtime; the graph compile path also provides a LangGraph store for production backends.
+Static prompt sections can be cached and reused, but dynamic sections are rebuilt as needed. Project instructions, memory content, and environment details are refreshed so a compacted or resumed run sees current instructions, current memory, and current workspace context rather than a permanently frozen prompt.
+
+Project instructions follow the Claude Code-style layout. The prompt builder loads `CLAUDE.md`, `.claude/CLAUDE.md`, and `.claude/rules/*.md` from the active workspace and presents them in the project-instructions section.
+
+Long-term memory is file-based by default. Each project gets a memory root under `~/.graph-code/projects/<project-key>/memory/`, unless `GRAPH_CODE_MEMORY_DIR` overrides it. `MEMORY.md` acts as the index, and topic files include frontmatter with `name`, `description`, `type`, and `updated_at`. File tools validate runtime paths against the active workspace and the configured memory root, so memory files can be read and updated without broad filesystem access.
+
+Session memory is optional and disabled by default. When `ENABLE_SESSION_MEMORY=true`, Graph Code can maintain `~/.graph-code/projects/<project-key>/session-memory/session.md`; when available, that session memory can be preferred as a compact source before falling back to model or extractive summaries. Memory relevance and automatic memory extraction are also opt-in, controlled by `ENABLE_MEMORY_RELEVANCE` and `ENABLE_AUTO_MEMORY_EXTRACTION`.
+
+Skill bodies are not loaded into the prompt by default. The model sees the manifest and calls `load_skill` when it needs a full body.
 
 ## Context Compaction
 
