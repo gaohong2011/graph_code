@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -138,6 +138,31 @@ def test_maybe_update_session_memory_records_tool_call_count(tmp_path):
     update = maybe_update_session_memory(state, config)
 
     assert update["session_memory_state"]["tool_calls_at_last_update"] == 1
+
+
+def test_real_session_memory_update_preserves_recent_exact_facts(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="real-model", api_key="real-key")
+    config.session_memory_enabled = True
+    config.session_memory_init_tokens = 10
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="Remember exact fact SESSION_MEMORY_SENTINEL for compact."),
+        AIMessage(content="SESSION_MEMORY_TURN_OK"),
+    ]
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="# Current State\nUpdated.")
+
+    with patch("graph_code.agent.session_memory.updater.get_llm", return_value=llm):
+        update = maybe_update_session_memory(state, config)
+
+    assert update["session_memory_state"]["initialized"] is True
+    from graph_code.agent.memory.paths import memory_paths_for_project
+
+    content = memory_paths_for_project(config).session_memory_file.read_text(encoding="utf-8")
+    assert "SESSION_MEMORY_SENTINEL" in content
+    request = llm.invoke.call_args.args[0]
+    assert "Return a complete session memory markdown" in request[0].content
+    assert "SESSION_MEMORY_SENTINEL" in request[1].content
 
 
 def test_maybe_update_session_memory_captures_memory_path_errors(tmp_path):

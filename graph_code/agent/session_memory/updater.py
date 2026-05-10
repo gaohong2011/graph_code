@@ -9,7 +9,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..compaction.policy import estimate_messages_tokens
 from ..memory.paths import memory_paths_for_project
 from ...llm.client import get_llm
-from .prompt import build_mock_session_memory
+from .prompt import (
+    SESSION_MEMORY_UPDATE_SYSTEM,
+    build_mock_session_memory,
+    build_session_memory_update_prompt,
+    ensure_session_memory_worklog,
+)
 from .state import count_assistant_tool_calls, should_update_session_memory
 
 
@@ -41,11 +46,12 @@ def maybe_update_session_memory(state: dict[str, Any], config: Any) -> dict[str,
         else:
             response = get_llm(config=config).invoke(
                 [
-                    SystemMessage(content="Update the session memory markdown. Return markdown only. Do not call tools."),
-                    HumanMessage(content=text),
+                    SystemMessage(content=SESSION_MEMORY_UPDATE_SYSTEM),
+                    HumanMessage(content=build_session_memory_update_prompt(text)),
                 ]
             )
             content = str(getattr(response, "content", "")).strip() or build_mock_session_memory(text)
+            content = ensure_session_memory_worklog(content, text)
         paths.session_memory_file.write_text(content, encoding="utf-8")
         session_state.update(
             {
