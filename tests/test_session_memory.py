@@ -55,7 +55,7 @@ def test_should_not_update_when_latest_assistant_tool_call_has_tool_result(tmp_p
     assert should_update_session_memory(state, config) is False
 
 
-def test_should_update_when_tool_call_threshold_met_after_final_assistant(tmp_path):
+def test_should_not_update_when_only_tool_call_threshold_met_before_initialization(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     config.session_memory_enabled = True
     config.session_memory_init_tokens = 10_000
@@ -71,10 +71,10 @@ def test_should_update_when_tool_call_threshold_met_after_final_assistant(tmp_pa
         AIMessage(content="final answer"),
     ]
 
-    assert should_update_session_memory(state, config) is True
+    assert should_update_session_memory(state, config) is False
 
 
-def test_should_update_when_tool_call_growth_threshold_met_after_initialization(tmp_path):
+def test_should_not_update_when_only_tool_call_growth_threshold_met_after_initialization(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     config.session_memory_enabled = True
     config.session_memory_update_tokens = 10_000
@@ -103,7 +103,7 @@ def test_should_update_when_tool_call_growth_threshold_met_after_initialization(
         AIMessage(content="final answer"),
     ]
 
-    assert should_update_session_memory(state, config) is True
+    assert should_update_session_memory(state, config) is False
 
 
 def test_maybe_update_session_memory_writes_mock_summary(tmp_path):
@@ -122,7 +122,7 @@ def test_maybe_update_session_memory_writes_mock_summary(tmp_path):
 def test_maybe_update_session_memory_records_tool_call_count(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     config.session_memory_enabled = True
-    config.session_memory_init_tokens = 10_000
+    config.session_memory_init_tokens = 10
     config.session_memory_tool_calls = 1
     state = create_initial_state()
     state["messages"] = [

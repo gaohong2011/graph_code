@@ -30,17 +30,8 @@ def should_update_session_memory(state: dict[str, Any], config: Any) -> bool:
     if latest_assistant and getattr(latest_assistant, "tool_calls", None):
         return False
     current_tokens = estimate_messages_tokens(list(state.get("messages", [])))
-    current_tool_calls = count_assistant_tool_calls(list(state.get("messages", [])))
-    tool_call_threshold = int(getattr(config, "session_memory_tool_calls", 3))
     session_state = state.get("session_memory_state") or {}
     if not session_state.get("initialized"):
-        return (
-            current_tokens >= int(getattr(config, "session_memory_init_tokens", 10000))
-            or current_tool_calls >= tool_call_threshold
-        )
+        return current_tokens >= int(getattr(config, "session_memory_init_tokens", 10000))
     token_growth = current_tokens - int(session_state.get("tokens_at_last_update", 0))
-    tool_call_growth = current_tool_calls - int(session_state.get("tool_calls_at_last_update", 0))
-    return (
-        token_growth >= int(getattr(config, "session_memory_update_tokens", 5000))
-        or tool_call_growth >= tool_call_threshold
-    )
+    return token_growth >= int(getattr(config, "session_memory_update_tokens", 5000))
