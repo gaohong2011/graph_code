@@ -26,6 +26,32 @@ class Config:
         self.permission_mode: str = os.getenv("PERMISSION_MODE", "default")
         self.output_limit: int = int(os.getenv("OUTPUT_LIMIT", "12000"))
         self.agent_data_dir: str = os.getenv("AGENT_DATA_DIR", ".agent")
+        self.graph_code_home: str = os.getenv(
+            "GRAPH_CODE_HOME",
+            str(Path.home() / ".graph-code"),
+        )
+        self.memory_dir: Optional[str] = os.getenv("GRAPH_CODE_MEMORY_DIR")
+        self.memory_disabled: bool = (
+            os.getenv("GRAPH_CODE_DISABLE_MEMORY", "false").lower() == "true"
+        )
+        self.memory_relevance_enabled: bool = (
+            os.getenv("ENABLE_MEMORY_RELEVANCE", "false").lower() == "true"
+        )
+        self.session_memory_enabled: bool = (
+            os.getenv("ENABLE_SESSION_MEMORY", "false").lower() == "true"
+        )
+        self.auto_memory_extraction_enabled: bool = (
+            os.getenv("ENABLE_AUTO_MEMORY_EXTRACTION", "false").lower() == "true"
+        )
+        self.session_memory_init_tokens: int = int(
+            os.getenv("SESSION_MEMORY_INIT_TOKENS", "10000")
+        )
+        self.session_memory_update_tokens: int = int(
+            os.getenv("SESSION_MEMORY_UPDATE_TOKENS", "5000")
+        )
+        self.session_memory_tool_calls: int = int(
+            os.getenv("SESSION_MEMORY_TOOL_CALLS", "3")
+        )
         self.checkpoint_backend: str = os.getenv("CHECKPOINT_BACKEND", "memory")
         self.checkpoint_uri: Optional[str] = os.getenv("CHECKPOINT_URI")
         self.store_backend: str = os.getenv("STORE_BACKEND", "memory")
@@ -81,6 +107,15 @@ class Config:
         config.permission_mode = permission_mode
         config.output_limit = 12000
         config.agent_data_dir = ".agent"
+        config.graph_code_home = str(Path(working_dir) / ".graph-code-home")
+        config.memory_dir = None
+        config.memory_disabled = False
+        config.memory_relevance_enabled = False
+        config.session_memory_enabled = False
+        config.auto_memory_extraction_enabled = False
+        config.session_memory_init_tokens = 10000
+        config.session_memory_update_tokens = 5000
+        config.session_memory_tool_calls = 3
         config.checkpoint_backend = "memory"
         config.checkpoint_uri = None
         config.store_backend = "memory"

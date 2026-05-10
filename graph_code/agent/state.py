@@ -18,6 +18,11 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     context_messages: list[BaseMessage]
+    system_prompt: str
+    prompt_state: dict[str, Any]
+    memory_state: dict[str, Any]
+    session_memory_state: dict[str, Any]
+    file_context_state: dict[str, Any]
     turn_count: int
     transition_reason: str | None
     pending_tool_calls: list[dict[str, Any]]
@@ -58,6 +63,31 @@ def create_initial_state(permission_mode: str = "default") -> AgentState:
     return {
         "messages": [],
         "context_messages": [],
+        "system_prompt": "",
+        "prompt_state": {
+            "cache": {},
+            "invalidated": False,
+            "last_error": None,
+            "last_built_turn": None,
+        },
+        "memory_state": {
+            "surfaced_memories": [],
+            "recent_memory_writes": [],
+            "last_extraction_cursor": None,
+            "last_error": None,
+        },
+        "session_memory_state": {
+            "initialized": False,
+            "last_summarized_index": 0,
+            "last_summarized_hash": None,
+            "tokens_at_last_update": 0,
+            "tool_calls_at_last_update": 0,
+            "in_progress": False,
+            "last_error": None,
+        },
+        "file_context_state": {
+            "recent_files": [],
+        },
         "turn_count": 0,
         "transition_reason": None,
         "pending_tool_calls": [],

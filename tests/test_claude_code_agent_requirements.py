@@ -68,6 +68,21 @@ def test_initial_state_contains_required_custom_fields():
     assert state["pending_tool_calls"] == []
     assert state["notifications"] == []
 
+    for key in [
+        "system_prompt",
+        "prompt_state",
+        "memory_state",
+        "session_memory_state",
+        "file_context_state",
+    ]:
+        assert key in state
+
+    assert state["system_prompt"] == ""
+    assert state["prompt_state"]["cache"] == {}
+    assert state["memory_state"]["surfaced_memories"] == []
+    assert state["session_memory_state"]["initialized"] is False
+    assert state["file_context_state"]["recent_files"] == []
+
 
 def test_persistence_factories_return_memory_backends(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")

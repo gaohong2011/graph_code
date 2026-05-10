@@ -9,6 +9,48 @@ import pytest
 from graph_code.config import Config, get_config, reset_config
 
 
+def test_memory_and_session_config_defaults(tmp_path):
+    with patch.dict(os.environ, {"WORKING_DIR": str(tmp_path)}, clear=True):
+        config = Config()
+
+    assert config.graph_code_home.endswith(".graph-code")
+    assert config.memory_disabled is False
+    assert config.memory_dir is None
+    assert config.memory_relevance_enabled is False
+    assert config.session_memory_enabled is False
+    assert config.auto_memory_extraction_enabled is False
+    assert config.session_memory_init_tokens == 10000
+    assert config.session_memory_update_tokens == 5000
+    assert config.session_memory_tool_calls == 3
+
+
+def test_memory_and_session_config_from_env(tmp_path):
+    env_vars = {
+        "WORKING_DIR": str(tmp_path),
+        "GRAPH_CODE_HOME": str(tmp_path / "home"),
+        "GRAPH_CODE_MEMORY_DIR": str(tmp_path / "mem"),
+        "GRAPH_CODE_DISABLE_MEMORY": "true",
+        "ENABLE_MEMORY_RELEVANCE": "true",
+        "ENABLE_SESSION_MEMORY": "true",
+        "ENABLE_AUTO_MEMORY_EXTRACTION": "true",
+        "SESSION_MEMORY_INIT_TOKENS": "123",
+        "SESSION_MEMORY_UPDATE_TOKENS": "45",
+        "SESSION_MEMORY_TOOL_CALLS": "6",
+    }
+    with patch.dict(os.environ, env_vars, clear=True):
+        config = Config()
+
+    assert config.graph_code_home == str(tmp_path / "home")
+    assert config.memory_dir == str(tmp_path / "mem")
+    assert config.memory_disabled is True
+    assert config.memory_relevance_enabled is True
+    assert config.session_memory_enabled is True
+    assert config.auto_memory_extraction_enabled is True
+    assert config.session_memory_init_tokens == 123
+    assert config.session_memory_update_tokens == 45
+    assert config.session_memory_tool_calls == 6
+
+
 class TestConfig:
     """Tests for Config class."""
 
