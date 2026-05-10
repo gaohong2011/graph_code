@@ -131,7 +131,7 @@ Summary compact 会把完整压缩前 transcript 写到 `.agent/transcripts/{bou
 
 ## 持久化实体
 
-所有本地持久化记录都在 `.agent/` 下：
+Task、runtime、schedule、team、request、worktree 和 tool-output 记录位于 `.agent/` 下：
 
 ```text
 .agent/
@@ -142,8 +142,9 @@ Summary compact 会把完整压缩前 transcript 写到 `.agent/transcripts/{bou
   requests/
   worktrees/
   tool-outputs/
-  memory/
 ```
+
+长期 memory 单独存储在 `~/.graph-code/projects/<project-key>/memory/`，也可以通过 `GRAPH_CODE_MEMORY_DIR` 覆盖。
 
 Task record 包含 `id`、`subject`、`description`、`status`、`blockedBy`、`blocks`、`owner` 和 `worktree`。任务完成后会从下游任务的 `blockedBy` 中移除并在无阻塞时解锁依赖任务。Claim 使用锁文件，并追加 claim event。
 

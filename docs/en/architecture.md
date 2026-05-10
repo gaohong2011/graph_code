@@ -131,7 +131,7 @@ Each recovery path writes `transition_reason` so the CLI and tests can inspect w
 
 ## Persistent Entities
 
-All durable local records live under `.agent/`.
+Task, runtime, schedule, team, request, worktree, and tool-output records live under `.agent/`.
 
 ```text
 .agent/
@@ -142,8 +142,9 @@ All durable local records live under `.agent/`.
   requests/
   worktrees/
   tool-outputs/
-  memory/
 ```
+
+Long-term memory is stored separately under `~/.graph-code/projects/<project-key>/memory/`, or under `GRAPH_CODE_MEMORY_DIR` when that override is set.
 
 Task records contain `id`, `subject`, `description`, `status`, `blockedBy`, `blocks`, `owner`, and `worktree`. Completing a task removes it from downstream `blockedBy` lists and unlocks dependents when no blockers remain. Claiming uses a lock file and appends a claim event.
 
