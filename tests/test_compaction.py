@@ -16,6 +16,7 @@ from graph_code.agent.nodes import (
     execute_tools,
     recovery_handler,
 )
+from graph_code.agent.compaction.policy import estimate_messages_tokens
 from graph_code.agent.state import create_initial_state
 from graph_code.config import Config
 from graph_code.llm.protocol import validate_tool_message_protocol
@@ -409,6 +410,66 @@ def test_summary_compact_session_memory_skips_model_summary(tmp_path):
     mock_get_llm.assert_not_called()
     context_text = "\n".join(str(message.content) for message in result["context_messages"])
     assert "Use this persisted session memory" in context_text
+
+
+def test_summary_compact_clips_oversized_session_memory_and_recomputes_budget(tmp_path):
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+    config.session_memory_enabled = True
+    config.compact_summary_max_chars = 300
+    from graph_code.agent.memory.paths import memory_paths_for_project
+
+    paths = memory_paths_for_project(config)
+    paths.session_memory_dir.mkdir(parents=True)
+    paths.session_memory_file.write_text(
+        "# Current State\n" + ("A" * 2000) + "\nTAIL_SHOULD_NOT_APPEAR\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+
+    result = compact_check(state, config=config)
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    token_budget = result["compact_state"]["token_budget"]
+    assert "TAIL_SHOULD_NOT_APPEAR" not in context_text
+    assert token_budget["after_summary_tokens"] == estimate_messages_tokens(
+        result["context_messages"]
+    )
+
+
+def test_summary_compact_skips_session_memory_when_clipped_candidate_is_over_budget(tmp_path):
+    config = _compact_test_config(tmp_path, context_window_tokens=120)
+    config.session_memory_enabled = True
+    config.compact_summary_max_chars = 1200
+    from graph_code.agent.memory.paths import memory_paths_for_project
+
+    paths = memory_paths_for_project(config)
+    paths.session_memory_dir.mkdir(parents=True)
+    paths.session_memory_file.write_text(
+        "# Current State\n" + ("B" * 2000) + "\nTAIL_SHOULD_NOT_APPEAR\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+
+    result = compact_check(state, config=config)
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    token_budget = result["compact_state"]["token_budget"]
+    assert "TAIL_SHOULD_NOT_APPEAR" not in context_text
+    assert token_budget["after_summary_tokens"] == estimate_messages_tokens(
+        result["context_messages"]
+    )
+    assert (
+        token_budget.get("session_memory_skipped") == "over_budget"
+        or token_budget["after_summary_tokens"] <= token_budget["auto_compact_threshold"]
+    )
 
 
 def test_execute_tools_records_recent_file_context(tmp_path):

@@ -30,6 +30,7 @@ from .compaction import (
     format_summary,
     get_compaction_policy,
 )
+from .compaction.policy import estimate_messages_tokens
 from .compaction.prompt import build_model_compact_prompt, format_model_compact_summary
 from .compaction.runtime_context import (
     build_rehydration_text,
@@ -562,6 +563,7 @@ def compact_check(
     compacted = _maybe_add_session_memory_summary(compacted, config or get_config())
     compacted = _maybe_add_model_compact_summary(compacted, config or get_config(), state)
     compacted = _add_post_compact_context(compacted, state, config or get_config())
+    compacted = _recompute_summary_token_budget(compacted)
 
     compact_state = _updated_compact_state(state, compacted, context_hash)
     if compacted.mode == "summary":
@@ -875,20 +877,116 @@ def _maybe_add_session_memory_summary(
     session_memory = load_session_memory_for_compact(config)
     if not session_memory:
         return compacted
-    summary = dict(compacted.summary)
-    summary["model_summary"] = session_memory
-    summary["session_memory_path"] = memory_paths_for_project(
-        config
-    ).session_memory_file.as_posix()
-    context_messages = list(compacted.context_messages)
-    if len(context_messages) >= 2:
-        context_messages[1] = HumanMessage(content=format_summary(summary))
+    candidate = _fit_session_memory_summary(compacted, config, session_memory)
+    if candidate is None:
+        token_budget = dict(compacted.token_budget)
+        token_budget["session_memory_skipped"] = "over_budget"
+        token_budget["after_summary_tokens"] = estimate_messages_tokens(compacted.context_messages)
+        return CompactionOutput(
+            mode=compacted.mode,
+            context_messages=compacted.context_messages,
+            summary=compacted.summary,
+            boundary_id=compacted.boundary_id,
+            token_budget=token_budget,
+            micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+        )
+    summary, context_messages, token_budget = candidate
     return CompactionOutput(
         mode=compacted.mode,
         context_messages=context_messages,
         summary=summary,
         boundary_id=compacted.boundary_id,
-        token_budget=compacted.token_budget,
+        token_budget=token_budget,
+        micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+    )
+
+
+def _fit_session_memory_summary(
+    compacted: CompactionOutput,
+    config: Config,
+    session_memory: str,
+) -> tuple[dict[str, Any], list[Any], dict[str, Any]] | None:
+    original_context_messages = list(compacted.context_messages)
+    original_tokens = estimate_messages_tokens(original_context_messages)
+    token_budget = dict(compacted.token_budget)
+    threshold = int(token_budget.get("auto_compact_threshold", 0) or 0)
+    max_chars = min(
+        len(session_memory),
+        int(getattr(config, "compact_summary_max_chars", 12000)),
+    )
+    max_chars = max(0, max_chars)
+    lengths = _session_memory_candidate_lengths(max_chars)
+    best: tuple[dict[str, Any], list[Any], dict[str, Any]] | None = None
+    best_tokens: int | None = None
+    for length in lengths:
+        clipped = _clip_session_memory(session_memory, length)
+        summary = dict(compacted.summary or {})
+        summary["model_summary"] = clipped
+        summary["session_memory_path"] = memory_paths_for_project(
+            config
+        ).session_memory_file.as_posix()
+        context_messages = list(original_context_messages)
+        if len(context_messages) >= 2:
+            context_messages[1] = HumanMessage(content=format_summary(summary))
+        current_budget = dict(token_budget)
+        current_tokens = estimate_messages_tokens(context_messages)
+        current_budget["after_summary_tokens"] = current_tokens
+        if length < len(session_memory):
+            current_budget["session_memory_clipped_chars"] = length
+        candidate = (summary, context_messages, current_budget)
+        if best_tokens is None or current_tokens < best_tokens:
+            best = candidate
+            best_tokens = current_tokens
+        if threshold <= 0 or current_tokens <= threshold:
+            return candidate
+    if best is None:
+        return None
+    best_budget = best[2]
+    if (
+        threshold > 0
+        and best_tokens
+        and best_tokens > threshold
+        and original_tokens < best_tokens
+        and best_budget.get("session_memory_clipped_chars") is not None
+    ):
+        return None
+    return best
+
+
+def _session_memory_candidate_lengths(max_chars: int) -> list[int]:
+    if max_chars <= 0:
+        return [0]
+    lengths = [max_chars]
+    current = max_chars
+    while current > 256:
+        current = max(256, current // 2)
+        if current != lengths[-1]:
+            lengths.append(current)
+    return lengths
+
+
+def _clip_session_memory(session_memory: str, max_chars: int) -> str:
+    if len(session_memory) <= max_chars:
+        return session_memory
+    if max_chars <= 0:
+        return "[Session memory clipped]"
+    marker = "\n\n[Session memory clipped]"
+    if max_chars <= len(marker):
+        return marker.strip()[:max_chars]
+    return session_memory[: max_chars - len(marker)].rstrip() + marker
+
+
+def _recompute_summary_token_budget(compacted: CompactionOutput) -> CompactionOutput:
+    if compacted.mode != "summary":
+        return compacted
+    token_budget = dict(compacted.token_budget)
+    token_budget["after_summary_tokens"] = estimate_messages_tokens(compacted.context_messages)
+    return CompactionOutput(
+        mode=compacted.mode,
+        context_messages=compacted.context_messages,
+        summary=compacted.summary,
+        boundary_id=compacted.boundary_id,
+        token_budget=token_budget,
         micro_compacted_tool_results=compacted.micro_compacted_tool_results,
     )
 

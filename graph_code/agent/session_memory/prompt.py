@@ -33,4 +33,4 @@ _Terse step-by-step work log._
 
 
 def build_mock_session_memory(messages_text: str) -> str:
-    return DEFAULT_SESSION_MEMORY_TEMPLATE + "\n\n# Current State\n" + messages_text[:2000] + "\n"
+    return DEFAULT_SESSION_MEMORY_TEMPLATE + "\n\n# Worklog\n" + messages_text[:2000] + "\n"

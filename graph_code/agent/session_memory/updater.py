@@ -10,7 +10,7 @@ from ..compaction.policy import estimate_messages_tokens
 from ..memory.paths import memory_paths_for_project
 from ...llm.client import get_llm
 from .prompt import build_mock_session_memory
-from .state import should_update_session_memory
+from .state import count_assistant_tool_calls, should_update_session_memory
 
 
 def _is_context_too_long_error(error: str) -> bool:
@@ -31,11 +31,11 @@ def _is_context_too_long_error(error: str) -> bool:
 def maybe_update_session_memory(state: dict[str, Any], config: Any) -> dict[str, Any]:
     if not should_update_session_memory(state, config):
         return {}
-    paths = memory_paths_for_project(config)
-    paths.session_memory_dir.mkdir(parents=True, exist_ok=True)
     session_state = dict(state.get("session_memory_state") or {})
     text = _messages_text(state)
     try:
+        paths = memory_paths_for_project(config)
+        paths.session_memory_dir.mkdir(parents=True, exist_ok=True)
         if getattr(config, "llm_model", "mock") == "mock" or not getattr(config, "llm_api_key", None):
             content = build_mock_session_memory(text)
         else:
@@ -52,6 +52,9 @@ def maybe_update_session_memory(state: dict[str, Any], config: Any) -> dict[str,
                 "initialized": True,
                 "path": paths.session_memory_file.as_posix(),
                 "tokens_at_last_update": estimate_messages_tokens(list(state.get("messages", []))),
+                "tool_calls_at_last_update": count_assistant_tool_calls(
+                    list(state.get("messages", []))
+                ),
                 "last_summarized_index": len(state.get("messages", [])),
                 "last_error": None,
             }
