@@ -28,6 +28,7 @@ from .nodes import (
     run_pre_tool_hooks,
 )
 from .persistence import create_checkpointer, create_store
+from .session_memory.updater import maybe_update_session_memory
 from .state import AgentState, create_initial_state
 
 
@@ -62,6 +63,14 @@ def build_agent(
     def compact_check_node(state: AgentState) -> dict[str, Any]:
         return compact_check(state, config=cfg)
 
+    def final_response_node(state: AgentState) -> dict[str, Any]:
+        update = final_response(state)
+        merged = dict(state)
+        merged.update(update)
+        session_update = maybe_update_session_memory(merged, cfg)
+        update.update(session_update)
+        return update
+
     workflow.add_node("drain_notifications", drain_notifications)
     workflow.add_node("build_prompt", build_prompt_node)
     workflow.add_node("call_model", call_model_node)
@@ -75,7 +84,7 @@ def build_agent(
     workflow.add_node("append_tool_results", append_tool_results)
     workflow.add_node("compact_check", compact_check_node)
     workflow.add_node("recovery_handler_after_tools", recovery_handler_node)
-    workflow.add_node("final_response", final_response)
+    workflow.add_node("final_response", final_response_node)
 
     workflow.add_edge(START, "drain_notifications")
     workflow.add_edge("drain_notifications", "build_prompt")

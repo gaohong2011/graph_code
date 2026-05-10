@@ -360,6 +360,57 @@ def test_summary_compact_rehydrates_runtime_context(tmp_path):
         assert expected in context_text
 
 
+def test_summary_compact_prefers_session_memory_when_enabled(tmp_path):
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+    config.session_memory_enabled = True
+    from graph_code.agent.memory.paths import memory_paths_for_project
+
+    paths = memory_paths_for_project(config)
+    paths.session_memory_dir.mkdir(parents=True)
+    paths.session_memory_file.write_text(
+        "# Current State\nContinue implementation from session memory.\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+
+    result = compact_check(state, config=config)
+
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    assert "Continue implementation from session memory" in context_text
+
+
+def test_summary_compact_session_memory_skips_model_summary(tmp_path):
+    config = _compact_test_config(tmp_path, context_window_tokens=1000)
+    config.session_memory_enabled = True
+    config.llm_model = "real-model"
+    config.llm_api_key = "test-key"
+    config.compact_use_model_summary = True
+    from graph_code.agent.memory.paths import memory_paths_for_project
+
+    paths = memory_paths_for_project(config)
+    paths.session_memory_dir.mkdir(parents=True)
+    paths.session_memory_file.write_text(
+        "# Current State\nUse this persisted session memory.\n",
+        encoding="utf-8",
+    )
+    state = create_initial_state()
+    state["messages"] = [
+        HumanMessage(content="old context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+
+    with patch("graph_code.agent.nodes.get_llm") as mock_get_llm:
+        result = compact_check(state, config=config)
+
+    mock_get_llm.assert_not_called()
+    context_text = "\n".join(str(message.content) for message in result["context_messages"])
+    assert "Use this persisted session memory" in context_text
+
+
 def test_execute_tools_records_recent_file_context(tmp_path):
     (tmp_path / "a.py").write_text("print('a')\n", encoding="utf-8")
     config = Config.for_tests(working_dir=tmp_path, model="mock")

@@ -36,8 +36,10 @@ from .compaction.runtime_context import (
     run_compact_hook,
     write_transcript,
 )
+from .memory.paths import memory_paths_for_project
 from .prompt.builder import build_system_prompt
 from .prompt.cache import invalidate_prompt_cache
+from .session_memory.compact import load_session_memory_for_compact
 from .state import AgentState
 
 
@@ -557,6 +559,7 @@ def compact_check(
         force_micro=_should_time_based_microcompact(state, config or get_config()),
     )
     compacted = _add_pre_compact_context(compacted, state, config or get_config())
+    compacted = _maybe_add_session_memory_summary(compacted, config or get_config())
     compacted = _maybe_add_model_compact_summary(compacted, config or get_config(), state)
     compacted = _add_post_compact_context(compacted, state, config or get_config())
 
@@ -829,6 +832,8 @@ def _maybe_add_model_compact_summary(
 ) -> CompactionOutput:
     if compacted.mode != "summary" or not compacted.summary:
         return compacted
+    if compacted.summary.get("session_memory_path") and compacted.summary.get("model_summary"):
+        return compacted
     if config.llm_model == "mock" or not getattr(config, "compact_use_model_summary", True):
         return compacted
     if not config.llm_api_key:
@@ -848,6 +853,33 @@ def _maybe_add_model_compact_summary(
 
     summary = dict(compacted.summary)
     summary["model_summary"] = model_summary
+    context_messages = list(compacted.context_messages)
+    if len(context_messages) >= 2:
+        context_messages[1] = HumanMessage(content=format_summary(summary))
+    return CompactionOutput(
+        mode=compacted.mode,
+        context_messages=context_messages,
+        summary=summary,
+        boundary_id=compacted.boundary_id,
+        token_budget=compacted.token_budget,
+        micro_compacted_tool_results=compacted.micro_compacted_tool_results,
+    )
+
+
+def _maybe_add_session_memory_summary(
+    compacted: CompactionOutput,
+    config: Config,
+) -> CompactionOutput:
+    if compacted.mode != "summary" or not compacted.summary:
+        return compacted
+    session_memory = load_session_memory_for_compact(config)
+    if not session_memory:
+        return compacted
+    summary = dict(compacted.summary)
+    summary["model_summary"] = session_memory
+    summary["session_memory_path"] = memory_paths_for_project(
+        config
+    ).session_memory_file.as_posix()
     context_messages = list(compacted.context_messages)
     if len(context_messages) >= 2:
         context_messages[1] = HumanMessage(content=format_summary(summary))
