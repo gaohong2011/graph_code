@@ -85,6 +85,24 @@ def test_project_instruction_path_rules_require_matching_file_context(tmp_path):
     assert "python-only rule" not in with_other_context
 
 
+def test_project_instruction_path_rules_resolve_relative_to_working_dir(tmp_path):
+    repo = tmp_path / "repo"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    rules = repo / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "pkg-python.md").write_text(
+        "---\npaths: pkg/**/*.py\n---\npkg python rule",
+        encoding="utf-8",
+    )
+    config = Config.for_tests(working_dir=pkg, model="mock")
+
+    text = load_project_instructions(config, active_paths=["app.py"])
+
+    assert "pkg python rule" in text
+
+
 def test_project_instruction_includes_are_limited_to_workspace_and_memory(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / "shared.md").write_text("included workspace rule", encoding="utf-8")

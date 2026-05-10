@@ -255,6 +255,13 @@ def _sync_state_update(state: AgentState, update: dict[str, Any]) -> None:
 
 def _prepare_turn_state(state: AgentState, user_input: str) -> None:
     """Reset per-turn control state and append the new user message."""
+    memory_state = dict(state.get("memory_state") or {})
+    try:
+        current_user_turn = int(memory_state.get("current_user_turn_id", 0) or 0) + 1
+    except (TypeError, ValueError):
+        current_user_turn = 1
+    memory_state["current_user_turn_id"] = current_user_turn
+    state["memory_state"] = memory_state
     state["final_response"] = None
     state["error"] = None
     state["pending_question"] = False

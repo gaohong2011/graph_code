@@ -871,7 +871,7 @@ def _updated_memory_state_after_tools(
     memory_state = dict(state.get("memory_state") or {})
     writes = list(memory_state.get("recent_memory_writes") or [])
     wrote_memory = False
-    current_turn = int(state.get("turn_count", 0) or 0) + 1
+    current_user_turn = _current_user_turn_id(state)
     for call, result in zip(calls, results):
         if not result.ok or _file_context_is_error(result):
             continue
@@ -886,7 +886,8 @@ def _updated_memory_state_after_tools(
             wrote_memory = True
     if wrote_memory:
         memory_state["recent_memory_writes"] = writes[-20:]
-        memory_state["last_turn_memory_write"] = current_turn
+        memory_state["last_memory_write_user_turn_id"] = current_user_turn
+        memory_state.pop("last_turn_memory_write", None)
         memory_state["last_error"] = None
     return memory_state
 
@@ -910,7 +911,15 @@ def _call_targets_memory_root(call: dict[str, Any], config: Config) -> bool:
 
 def _memory_was_written_this_turn(state: AgentState) -> bool:
     memory_state = state.get("memory_state") or {}
-    return memory_state.get("last_turn_memory_write") == state.get("turn_count")
+    return memory_state.get("last_memory_write_user_turn_id") == _current_user_turn_id(state)
+
+
+def _current_user_turn_id(state: AgentState) -> str:
+    memory_state = state.get("memory_state") or {}
+    value = memory_state.get("current_user_turn_id")
+    if value is not None:
+        return str(value)
+    return str(sum(1 for message in state.get("messages", []) if isinstance(message, HumanMessage)))
 
 
 def _file_path_from_call(call: dict[str, Any]) -> str | None:

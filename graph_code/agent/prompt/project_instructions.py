@@ -20,7 +20,7 @@ def load_project_instructions(config: Any, active_paths: list[str] | None = None
     project_root = _project_root(cwd) or cwd
     memory_root = _memory_root(config)
     files = _instruction_files(cwd)
-    active = _active_paths(active_paths or [], project_root)
+    active = _active_paths(active_paths or [], project_root, cwd)
     blocks: list[str] = []
     include_count = 0
     for path in files:
@@ -190,12 +190,12 @@ def _frontmatter_paths(metadata: dict[str, str]) -> list[str] | None:
     return normalized or None
 
 
-def _active_paths(paths: list[str], project_root: Path) -> list[str]:
+def _active_paths(paths: list[str], project_root: Path, working_dir: Path) -> list[str]:
     active: list[str] = []
     for raw in paths:
         try:
             path = Path(raw)
-            resolved = path.resolve() if path.is_absolute() else (project_root / path).resolve()
+            resolved = path.resolve() if path.is_absolute() else (working_dir / path).resolve()
             if _is_relative_to(resolved, project_root):
                 active.append(resolved.relative_to(project_root).as_posix())
             else:

@@ -133,3 +133,61 @@ def test_auto_memory_extraction_skips_when_turn_already_wrote_memory(tmp_path):
     paths = memory_paths_for_project(config)
     assert final_update == {"final": True}
     assert len(list(paths.memory_dir.glob("feedback_*.md"))) == 1
+
+
+def test_auto_memory_extraction_still_skips_after_later_tool_round_same_user_turn(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.auto_memory_extraction_enabled = True
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    state = create_initial_state()
+    state["messages"] = [HumanMessage(content="remember that I prefer terse replies")]
+    state["tool_calls"] = [
+        {
+            "id": "save-memory",
+            "name": "save_memory",
+            "args": {
+                "namespace": "feedback",
+                "key": "reply style",
+                "value": "I prefer terse replies",
+            },
+        }
+    ]
+    state.update(execute_tools(state, config=config))
+    state["tool_calls"] = [
+        {"id": "read-file", "name": "read_file", "args": {"file_path": "README.md"}}
+    ]
+    state.update(execute_tools(state, config=config))
+    state["final_response"] = "done"
+
+    final_update = final_response(state, config=config)
+
+    paths = memory_paths_for_project(config)
+    assert final_update == {"final": True}
+    assert len(list(paths.memory_dir.glob("feedback_*.md"))) == 1
+
+
+def test_auto_memory_extraction_does_not_skip_next_user_turn(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.auto_memory_extraction_enabled = True
+    state = create_initial_state()
+    state["messages"] = [HumanMessage(content="remember that I prefer terse replies")]
+    state["tool_calls"] = [
+        {
+            "id": "save-memory",
+            "name": "save_memory",
+            "args": {
+                "namespace": "feedback",
+                "key": "reply style",
+                "value": "I prefer terse replies",
+            },
+        }
+    ]
+    state.update(execute_tools(state, config=config))
+    state["messages"].append(HumanMessage(content="remember that I prefer python tests"))
+    state["final_response"] = "done"
+
+    final_update = final_response(state, config=config)
+
+    paths = memory_paths_for_project(config)
+    assert final_update["memory_state"]["recent_memory_writes"]
+    assert len(list(paths.memory_dir.glob("feedback_*.md"))) == 2
