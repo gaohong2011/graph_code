@@ -147,6 +147,7 @@ Thumbs.db
 
 # Project specific
 .agent/
+.worktrees/
 *.log
 logs/
 *.bak
