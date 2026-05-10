@@ -48,7 +48,7 @@ worktrees, skills, and MCP integrations. Keep final responses concise and factua
 
 def _runtime(config: Config | None = None) -> ToolExecutionRuntime:
     cfg = config or get_config()
-    return ToolExecutionRuntime(cfg.working_path, output_limit=cfg.output_limit)
+    return ToolExecutionRuntime(cfg.working_path, output_limit=cfg.output_limit, config=cfg)
 
 
 def get_tools() -> list[StructuredTool]:
@@ -597,7 +597,7 @@ def tools_node(state: AgentState) -> dict[str, Any]:
     calls = state.get("pending_tool_calls") or state.get("tool_calls") or []
     if not calls:
         return {}
-    runtime = ToolExecutionRuntime(Path.cwd())
+    runtime = ToolExecutionRuntime(Path.cwd(), config=get_config())
     results = runtime.execute(_sanitize_for_utf8(calls), skip_permissions=True)
     messages = [
         ToolMessage(

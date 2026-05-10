@@ -12,6 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
+from ..agent.memory.legacy import save_legacy_memory
+from ..agent.memory.paths import memory_paths_for_project
+from ..config import Config, get_config
 from ..entities.background import background_check, background_run
 from ..entities.schedules import schedule_create, schedule_delete, schedule_list
 from ..entities.tasks import (
@@ -67,11 +70,18 @@ class ToolExecutionRuntime:
         working_dir: str | Path,
         output_limit: int = 12000,
         mcp_registry: MCPClientRegistry | None = None,
+        config: Config | None = None,
     ):
+        self.config = config or get_config()
         self.working_dir = Path(working_dir).resolve()
         self.output_limit = output_limit
         self.agent_dir = self.working_dir / ".agent"
         self.output_dir = self.agent_dir / "tool-outputs"
+        self.memory_dir = (
+            None
+            if getattr(self.config, "memory_disabled", False)
+            else memory_paths_for_project(self.config).memory_dir
+        )
         self.mcp_registry = mcp_registry or MCPClientRegistry(self.working_dir)
 
     def execute(
@@ -224,11 +234,11 @@ class ToolExecutionRuntime:
     def _safe_path(self, file_path: str) -> Path:
         path = Path(file_path)
         target = path.resolve() if path.is_absolute() else (self.working_dir / path).resolve()
-        try:
-            target.relative_to(self.working_dir)
-        except ValueError as exc:
-            raise ValueError(f"Access denied: {file_path} is outside working directory") from exc
-        return target
+        if _is_relative_to(target, self.working_dir):
+            return target
+        if self.memory_dir is not None and _is_relative_to(target, self.memory_dir.resolve()):
+            return target
+        raise ValueError(f"Access denied: {file_path} is outside working directory")
 
     def read_file(self, file_path: str, offset: int = 0, limit: int | None = None) -> str:
         target = self._safe_path(file_path)
@@ -341,10 +351,9 @@ class ToolExecutionRuntime:
         return json.dumps({"mode": mode, "summary": summary or ""})
 
     def save_memory(self, namespace: str, key: str, value: str) -> str:
-        memory_dir = self.agent_dir / "memory" / namespace
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        (memory_dir / f"{key}.json").write_text(json.dumps({"value": value}, indent=2), encoding="utf-8")
-        return f"Saved memory: {namespace}/{key}"
+        if getattr(self.config, "memory_disabled", False):
+            return "Error: memory is disabled"
+        return save_legacy_memory(self.config, namespace, key, value)
 
     def _task_create(self, subject: str, description: str = "", **kwargs: Any) -> str:
         return task_create(self.working_dir, subject=subject, description=description, **kwargs).model_dump_json()
@@ -408,6 +417,14 @@ def _stringify(value: str | dict[str, Any]) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def _validate_todo_items(items: list[dict[str, Any]]) -> str | None:
