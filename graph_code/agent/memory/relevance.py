@@ -14,7 +14,9 @@ from .scan import scan_memory_headers
 
 
 def select_relevant_memories(query: str, config: Any, limit: int = 5) -> list[Path]:
-    if not getattr(config, "memory_relevance_enabled", False):
+    if getattr(config, "memory_disabled", False) or not getattr(
+        config, "memory_relevance_enabled", False
+    ):
         return []
     headers = scan_memory_headers(memory_paths_for_project(config).memory_dir)
     if not headers:
@@ -60,11 +62,16 @@ def select_relevant_memories(query: str, config: Any, limit: int = 5) -> list[Pa
 def build_relevant_memory_context(paths: list[Path]) -> str:
     if not paths:
         return ""
-    blocks = ["Relevant memories:"]
+    blocks: list[str] = []
     for path in paths[:5]:
         try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
+            resolved = path.resolve()
+            if path.is_symlink() or not resolved.is_file():
+                continue
+            content = resolved.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        blocks.append(f"## {path.name}\n{content[:8000]}")
-    return "\n\n".join(blocks)
+        blocks.append(f"## {resolved.name}\n{content[:8000]}")
+    if not blocks:
+        return ""
+    return "\n\n".join(["Relevant memories:"] + blocks)

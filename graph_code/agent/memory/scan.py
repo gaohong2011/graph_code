@@ -20,23 +20,29 @@ class MemoryHeader:
 
 
 def scan_memory_headers(memory_dir: str | Path) -> list[MemoryHeader]:
-    root = Path(memory_dir)
-    if not root.exists():
+    try:
+        root = Path(memory_dir).resolve()
+    except (OSError, ValueError):
+        return []
+    if not root.is_dir():
         return []
     headers: list[MemoryHeader] = []
     for path in root.rglob("*.md"):
-        if path.name == "MEMORY.md" or not path.is_file():
+        if path.name == "MEMORY.md" or path.is_symlink():
             continue
         try:
-            parsed = parse_frontmatter(path.read_text(encoding="utf-8", errors="ignore"))
-            stat = path.stat()
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                continue
+            parsed = parse_frontmatter(resolved.read_text(encoding="utf-8", errors="ignore"))
+            stat = resolved.stat()
         except OSError:
             continue
-        rel = path.relative_to(root).as_posix()
+        rel = resolved.relative_to(root).as_posix()
         headers.append(
             MemoryHeader(
                 filename=rel,
-                path=path,
+                path=resolved,
                 description=parsed.metadata.get("description"),
                 memory_type=normalize_memory_type(parsed.metadata.get("type")),
                 mtime=stat.st_mtime,

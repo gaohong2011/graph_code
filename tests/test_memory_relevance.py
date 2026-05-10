@@ -7,6 +7,7 @@ from graph_code.agent.memory.relevance import (
     build_relevant_memory_context,
     select_relevant_memories,
 )
+from graph_code.agent.memory.scan import scan_memory_headers
 from graph_code.agent.nodes import build_prompt
 from graph_code.agent.state import create_initial_state
 from graph_code.config import Config
@@ -14,6 +15,20 @@ from graph_code.config import Config
 
 def test_relevance_disabled_returns_empty(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
+
+    assert select_relevant_memories("testing", config) == []
+
+
+def test_relevance_memory_disabled_returns_empty(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.memory_relevance_enabled = True
+    config.memory_disabled = True
+    paths = memory_paths_for_project(config)
+    paths.memory_dir.mkdir(parents=True)
+    (paths.memory_dir / "testing.md").write_text(
+        "---\ndescription: policy\ntype: feedback\n---\nUse real DB.",
+        encoding="utf-8",
+    )
 
     assert select_relevant_memories("testing", config) == []
 
@@ -75,6 +90,30 @@ def test_build_relevant_memory_context_reads_selected_files(tmp_path):
 
     assert "Relevant memories" in context
     assert "Use real DB" in context
+
+
+def test_scan_and_context_skip_symlink_escape(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.memory_relevance_enabled = True
+    paths = memory_paths_for_project(config)
+    paths.memory_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        "---\ndescription: escaped\ntype: feedback\n---\nOutside secret.",
+        encoding="utf-8",
+    )
+    link = paths.memory_dir / "link.md"
+    link.symlink_to(outside)
+
+    assert scan_memory_headers(paths.memory_dir) == []
+    assert select_relevant_memories("link", config) == []
+    assert build_relevant_memory_context([link]) == ""
+
+
+def test_relevant_memory_context_empty_when_all_files_skipped(tmp_path):
+    missing = tmp_path / "missing.md"
+
+    assert build_relevant_memory_context([missing]) == ""
 
 
 def test_build_prompt_returns_surfaced_relevant_memories(tmp_path):

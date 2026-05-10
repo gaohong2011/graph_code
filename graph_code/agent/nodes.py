@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+import re
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -632,7 +633,9 @@ def final_response(state: AgentState, config: Config | None = None) -> dict[str,
 
 
 def _maybe_extract_explicit_memory(state: AgentState, config: Config) -> dict[str, Any]:
-    if not getattr(config, "auto_memory_extraction_enabled", False):
+    if getattr(config, "memory_disabled", False) or not getattr(
+        config, "auto_memory_extraction_enabled", False
+    ):
         return {}
     last_human = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, HumanMessage)),
@@ -641,14 +644,15 @@ def _maybe_extract_explicit_memory(state: AgentState, config: Config) -> dict[st
     if not last_human:
         return {}
     text = str(last_human.content).strip()
-    lowered = text.lower()
-    if not any(marker in lowered for marker in ("remember that", "please remember", "记住")):
+    value = _explicit_memory_value(text)
+    if not value:
         return {}
-    value = text
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    key = f"explicit user memory {digest}"
     from .memory.legacy import save_legacy_memory
 
     try:
-        result = save_legacy_memory(config, "feedback", "explicit user memory", value)
+        result = save_legacy_memory(config, "feedback", key, value)
         memory_state = dict(state.get("memory_state") or {})
         writes = list(memory_state.get("recent_memory_writes") or [])
         writes.append(result)
@@ -659,6 +663,19 @@ def _maybe_extract_explicit_memory(state: AgentState, config: Config) -> dict[st
         memory_state = dict(state.get("memory_state") or {})
         memory_state["last_error"] = f"{type(exc).__name__}: {exc}"
         return {"memory_state": memory_state}
+
+
+def _explicit_memory_value(text: str) -> str | None:
+    match = re.match(
+        r"\s*(?:remember that\s+|please remember\s+|记住\s*)(.+)\s*\Z",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    value = match.group(1).strip()
+    value = value.strip("\"'`")
+    return value.strip() or None
 
 
 def agent_node(state: AgentState) -> dict[str, Any]:
