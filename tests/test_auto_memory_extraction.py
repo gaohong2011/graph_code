@@ -4,7 +4,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 
 from graph_code.agent.memory.paths import memory_paths_for_project
-from graph_code.agent.nodes import final_response
+from graph_code.agent.nodes import execute_tools, final_response
 from graph_code.agent.state import create_initial_state
 from graph_code.config import Config
 
@@ -106,3 +106,30 @@ def test_final_response_existing_response_merges_memory_without_redundant_respon
     assert update["final"] is True
     assert "final_response" not in update
     assert update["memory_state"]["recent_memory_writes"]
+
+
+def test_auto_memory_extraction_skips_when_turn_already_wrote_memory(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.auto_memory_extraction_enabled = True
+    state = create_initial_state()
+    state["messages"] = [HumanMessage(content="remember that I prefer terse replies")]
+    state["tool_calls"] = [
+        {
+            "id": "save-memory",
+            "name": "save_memory",
+            "args": {
+                "namespace": "feedback",
+                "key": "reply style",
+                "value": "I prefer terse replies",
+            },
+        }
+    ]
+
+    tool_update = execute_tools(state, config=config)
+    state.update(tool_update)
+    state["final_response"] = "done"
+    final_update = final_response(state, config=config)
+
+    paths = memory_paths_for_project(config)
+    assert final_update == {"final": True}
+    assert len(list(paths.memory_dir.glob("feedback_*.md"))) == 1

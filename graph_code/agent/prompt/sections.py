@@ -63,8 +63,8 @@ def environment_section(config: Any) -> str:
     )
 
 
-def project_instruction_section(config: Any) -> str | None:
-    return load_project_instructions(config) or None
+def project_instruction_section(config: Any, active_paths: list[str] | None = None) -> str | None:
+    return load_project_instructions(config, active_paths=active_paths) or None
 
 
 def memory_section(config: Any) -> str | None:

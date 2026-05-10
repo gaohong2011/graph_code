@@ -20,6 +20,22 @@ def test_memory_path_uses_graph_code_home_and_project_slug(tmp_path):
     assert paths.memory_index.name == "MEMORY.md"
 
 
+def test_memory_path_uses_git_root_for_project_slug(tmp_path):
+    project = tmp_path / "repo"
+    leaf = project / "pkg"
+    leaf.mkdir(parents=True)
+    (project / ".git").mkdir()
+    root_config = Config.for_tests(working_dir=project, model="mock")
+    leaf_config = Config.for_tests(working_dir=leaf, model="mock")
+    root_config.graph_code_home = str(tmp_path / "home")
+    leaf_config.graph_code_home = str(tmp_path / "home")
+
+    root_paths = memory_paths_for_project(root_config)
+    leaf_paths = memory_paths_for_project(leaf_config)
+
+    assert leaf_paths.memory_dir == root_paths.memory_dir
+
+
 def test_memory_override_must_be_safe(tmp_path):
     safe = tmp_path / "safe-memory"
     assert validate_memory_root(str(safe)) == safe.resolve()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+import pathlib
 import re
 from typing import Any
 
@@ -494,6 +495,7 @@ def execute_tools(state: AgentState, config: Config | None = None) -> dict[str, 
         "tool_calls": [],
         "tool_results": merged,
         "file_context_state": _updated_file_context_state(state, calls, results),
+        "memory_state": _updated_memory_state_after_tools(state, calls, results, config or get_config()),
         "iteration_count": state.get("iteration_count", 0) + 1,
         "turn_count": state.get("turn_count", 0) + 1,
         "transition_reason": "tools_executed",
@@ -636,6 +638,8 @@ def _maybe_extract_explicit_memory(state: AgentState, config: Config) -> dict[st
     if getattr(config, "memory_disabled", False) or not getattr(
         config, "auto_memory_extraction_enabled", False
     ):
+        return {}
+    if _memory_was_written_this_turn(state):
         return {}
     last_human = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, HumanMessage)),
@@ -856,6 +860,57 @@ def _updated_file_context_state(
         )
     file_state["recent_files"] = recent[-20:]
     return file_state
+
+
+def _updated_memory_state_after_tools(
+    state: AgentState,
+    calls: list[dict[str, Any]],
+    results: list[ToolResultEnvelope],
+    config: Config,
+) -> dict[str, Any]:
+    memory_state = dict(state.get("memory_state") or {})
+    writes = list(memory_state.get("recent_memory_writes") or [])
+    wrote_memory = False
+    current_turn = int(state.get("turn_count", 0) or 0) + 1
+    for call, result in zip(calls, results):
+        if not result.ok or _file_context_is_error(result):
+            continue
+        name = call.get("name")
+        if name == "save_memory":
+            writes.append(result.content)
+            wrote_memory = True
+            continue
+        if name in {"write_file", "edit_file"} and _call_targets_memory_root(call, config):
+            args = call.get("args") or {}
+            writes.append(str(args.get("file_path", "")))
+            wrote_memory = True
+    if wrote_memory:
+        memory_state["recent_memory_writes"] = writes[-20:]
+        memory_state["last_turn_memory_write"] = current_turn
+        memory_state["last_error"] = None
+    return memory_state
+
+
+def _call_targets_memory_root(call: dict[str, Any], config: Config) -> bool:
+    if getattr(config, "memory_disabled", False):
+        return False
+    args = call.get("args") or {}
+    raw = args.get("file_path")
+    if not isinstance(raw, str):
+        return False
+    try:
+        memory_root = memory_paths_for_project(config).memory_dir.resolve()
+        path = pathlib.Path(raw)
+        target = path.resolve() if path.is_absolute() else (config.working_path / path).resolve()
+        target.relative_to(memory_root)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _memory_was_written_this_turn(state: AgentState) -> bool:
+    memory_state = state.get("memory_state") or {}
+    return memory_state.get("last_turn_memory_write") == state.get("turn_count")
 
 
 def _file_path_from_call(call: dict[str, Any]) -> str | None:

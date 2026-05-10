@@ -66,6 +66,43 @@ def test_project_instructions_strip_crlf_frontmatter(tmp_path):
     assert "project rule" in text
 
 
+def test_project_instruction_path_rules_require_matching_file_context(tmp_path):
+    (tmp_path / ".git").mkdir()
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "python.md").write_text(
+        "---\npaths: src/**/*.py\n---\npython-only rule",
+        encoding="utf-8",
+    )
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+
+    without_context = load_project_instructions(config)
+    with_matching_context = load_project_instructions(config, active_paths=["src/app.py"])
+    with_other_context = load_project_instructions(config, active_paths=["docs/readme.md"])
+
+    assert "python-only rule" not in without_context
+    assert "python-only rule" in with_matching_context
+    assert "python-only rule" not in with_other_context
+
+
+def test_project_instruction_includes_are_limited_to_workspace_and_memory(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "shared.md").write_text("included workspace rule", encoding="utf-8")
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("outside secret", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(
+        "main rule\n@shared.md\n@../outside.md",
+        encoding="utf-8",
+    )
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+
+    text = load_project_instructions(config)
+
+    assert "main rule" in text
+    assert "included workspace rule" in text
+    assert "outside secret" not in text
+
+
 def test_system_prompt_contains_claude_code_like_sections(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / "CLAUDE.md").write_text("project rule", encoding="utf-8")

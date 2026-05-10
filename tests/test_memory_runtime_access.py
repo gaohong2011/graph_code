@@ -88,6 +88,49 @@ def test_runtime_can_search_configured_memory_dir_outside_workspace(tmp_path):
     assert "ValueError" not in result.content
 
 
+def test_search_files_skips_memory_symlink_escape(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    memory = tmp_path / "memory-root"
+    memory.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret outside memory", encoding="utf-8")
+    (memory / "leak.md").symlink_to(outside)
+    config = Config.for_tests(working_dir=workspace, model="mock")
+    config.memory_dir = str(memory)
+    runtime = ToolExecutionRuntime(workspace, config=config)
+
+    result = runtime.execute(
+        [{"id": "search-memory", "name": "search_files", "args": {"path": str(memory), "pattern": "secret"}}],
+        skip_permissions=True,
+    )[0]
+
+    assert result.ok is True
+    assert "secret outside memory" not in result.content
+    assert "No matches found" in result.content
+
+
+def test_load_skill_rejects_absolute_path_outside_workspace_and_memory(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    memory = tmp_path / "memory-root"
+    memory.mkdir()
+    outside = tmp_path / "outside-skill.md"
+    outside.write_text("secret skill", encoding="utf-8")
+    config = Config.for_tests(working_dir=workspace, model="mock")
+    config.memory_dir = str(memory)
+    runtime = ToolExecutionRuntime(workspace, config=config)
+
+    result = runtime.execute(
+        [{"id": "load-skill", "name": "load_skill", "args": {"name": "x", "path": str(outside)}}],
+        skip_permissions=True,
+    )[0]
+
+    assert result.ok is False
+    assert "outside working directory" in result.content
+    assert "secret skill" not in result.content
+
+
 def test_runtime_rejects_memory_root_when_memory_disabled(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

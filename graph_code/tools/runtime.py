@@ -232,11 +232,16 @@ class ToolExecutionRuntime:
     def _safe_path(self, file_path: str) -> Path:
         path = Path(file_path)
         target = path.resolve() if path.is_absolute() else (self.working_dir / path).resolve()
-        if _is_relative_to(target, self.working_dir):
-            return target
-        if self.memory_dir is not None and _is_relative_to(target, self.memory_dir.resolve()):
+        if self._is_allowed_path(target):
             return target
         raise ValueError(f"Access denied: {file_path} is outside working directory")
+
+    def _is_allowed_path(self, target: Path) -> bool:
+        if _is_relative_to(target, self.working_dir):
+            return True
+        if self.memory_dir is not None and _is_relative_to(target, self.memory_dir.resolve()):
+            return True
+        return False
 
     def _display_path(self, file_path: Path) -> str:
         if _is_relative_to(file_path, self.working_dir):
@@ -331,9 +336,12 @@ class ToolExecutionRuntime:
         matches: list[str] = []
         for file_path in files:
             try:
-                for line_no, line in enumerate(file_path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+                target = file_path.resolve()
+                if not self._is_allowed_path(target) or not target.is_file():
+                    continue
+                for line_no, line in enumerate(target.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
                     if regex is None or regex.search(line):
-                        matches.append(f"{self._display_path(file_path)}:{line_no}: {line[:200]}")
+                        matches.append(f"{self._display_path(target)}:{line_no}: {line[:200]}")
             except OSError:
                 continue
         return "\n".join(matches) if matches else f"No matches found for pattern: {needle}"
@@ -351,10 +359,11 @@ class ToolExecutionRuntime:
         return json.dumps(current, ensure_ascii=False)
 
     def load_skill(self, name: str, path: str | None = None) -> str:
-        target = Path(path) if path else self.working_dir / ".agent" / "skills" / name / "SKILL.md"
-        if not target.is_absolute():
-            target = (self.working_dir / target).resolve()
+        raw_target = path or str(self.working_dir / ".agent" / "skills" / name / "SKILL.md")
+        target = self._safe_path(raw_target)
         if not target.exists():
+            return f"Error: Skill not found: {name}"
+        if not target.is_file():
             return f"Error: Skill not found: {name}"
         return target.read_text(encoding="utf-8", errors="ignore")
 

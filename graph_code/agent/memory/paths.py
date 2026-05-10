@@ -58,9 +58,16 @@ def validate_memory_root(raw: str | None) -> Path | None:
 
 
 def _default_memory_dir(config: Any) -> Path:
-    project = Path(getattr(config, "working_dir", ".")).resolve()
+    project = _canonical_project_root(Path(getattr(config, "working_dir", ".")).resolve())
     slug = _project_slug(project)
     return Path(getattr(config, "graph_code_home")).expanduser().resolve() / "projects" / slug / "memory"
+
+
+def _canonical_project_root(path: Path) -> Path:
+    for directory in [path, *path.parents]:
+        if (directory / ".git").exists():
+            return directory.resolve()
+    return path
 
 
 def _project_slug(path: Path) -> str:

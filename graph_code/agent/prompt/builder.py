@@ -23,7 +23,7 @@ def build_system_prompt(state: dict[str, Any], config: Any) -> str:
         cached_section(state, "task_behavior", task_behavior_section),
         cached_section(state, "tool_behavior", tool_behavior_section),
         cached_section(state, "context_behavior", context_behavior_section),
-        project_instruction_section(config),
+        project_instruction_section(config, active_paths=_active_file_paths(state)),
         memory_section(config),
         environment_section(config),
     ]
@@ -47,3 +47,16 @@ def _latest_user_text(state: dict[str, Any]) -> str:
         if getattr(message, "type", "") == "human":
             return str(getattr(message, "content", ""))
     return ""
+
+
+def _active_file_paths(state: dict[str, Any]) -> list[str]:
+    file_state = state.get("file_context_state") or {}
+    recent = file_state.get("recent_files") or []
+    paths: list[str] = []
+    for item in recent:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("path")
+        if isinstance(value, str) and value:
+            paths.append(value)
+    return paths
