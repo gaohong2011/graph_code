@@ -21,11 +21,13 @@ def save_legacy_memory(config: Any, namespace: str, key: str, value: str) -> str
     slug = _slug(f"{memory_type} {key}")
     topic = paths.memory_dir / f"{slug}.md"
     title = key.strip() or "memory"
+    metadata_title = _frontmatter_scalar(title)
+    metadata_description = _frontmatter_scalar(value, limit=160)
     content = "\n".join(
         [
             "---",
-            f"name: {title}",
-            f"description: {value.strip()[:160]}",
+            f"name: {metadata_title}",
+            f"description: {metadata_description}",
             f"type: {memory_type}",
             f"updated_at: {date.today().isoformat()}",
             "---",
@@ -36,13 +38,32 @@ def save_legacy_memory(config: Any, namespace: str, key: str, value: str) -> str
     )
     topic.write_text(content, encoding="utf-8")
 
-    entry = f"- [{title}]({topic.name}) - {value.strip()[:120]}"
+    index_title = _plain_scalar(title)
+    index_description = _plain_scalar(value, limit=120)
+    entry = f"- [{index_title}]({topic.name}) - {index_description}"
     index = paths.memory_index.read_text(encoding="utf-8", errors="ignore")
-    if topic.name not in index:
-        suffix = "\n" if index and not index.endswith("\n") else ""
-        paths.memory_index.write_text(index + suffix + entry + "\n", encoding="utf-8")
+    lines = index.splitlines()
+    link_target = f"]({topic.name})"
+    for line_number, line in enumerate(lines):
+        if link_target in line:
+            lines[line_number] = entry
+            break
+    else:
+        lines.append(entry)
+    paths.memory_index.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return json.dumps({"path": topic.as_posix(), "type": memory_type}, ensure_ascii=False)
+
+
+def _frontmatter_scalar(text: str, limit: int | None = None) -> str:
+    return json.dumps(_plain_scalar(text, limit=limit), ensure_ascii=False)
+
+
+def _plain_scalar(text: str, limit: int | None = None) -> str:
+    scalar = " ".join(text.strip().split())
+    if limit is not None:
+        scalar = scalar[:limit]
+    return scalar.replace("---", "- - -")
 
 
 def _slug(text: str) -> str:

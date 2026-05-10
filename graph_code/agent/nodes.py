@@ -6,7 +6,6 @@ import time
 import hashlib
 import json
 from typing import Any
-from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -597,7 +596,8 @@ def tools_node(state: AgentState) -> dict[str, Any]:
     calls = state.get("pending_tool_calls") or state.get("tool_calls") or []
     if not calls:
         return {}
-    runtime = ToolExecutionRuntime(Path.cwd(), config=get_config())
+    cfg = get_config()
+    runtime = ToolExecutionRuntime(cfg.working_path, config=cfg, output_limit=cfg.output_limit)
     results = runtime.execute(_sanitize_for_utf8(calls), skip_permissions=True)
     messages = [
         ToolMessage(

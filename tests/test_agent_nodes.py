@@ -1,5 +1,6 @@
 """Unit tests for agent.nodes module."""
 
+import json
 from unittest.mock import patch, MagicMock
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
@@ -137,6 +138,28 @@ class TestToolsNode:
         tools_node(state)
 
         assert "reasoning_content" not in assistant_message.additional_kwargs
+
+    def test_tools_node_uses_configured_workspace_not_process_cwd(self, tmp_path, monkeypatch):
+        """Direct tools_node callers should not get filesystem access to process CWD."""
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        (cwd / "cwd.txt").write_text("cwd secret", encoding="utf-8")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        config = Config.for_tests(working_dir=workspace, model="mock")
+        state = create_initial_state()
+        state["tool_calls"] = [
+            {"id": "call_1", "name": "read_file", "args": {"file_path": "cwd.txt"}}
+        ]
+
+        monkeypatch.chdir(cwd)
+        with patch("graph_code.agent.nodes.get_config", return_value=config):
+            result = tools_node(state)
+
+        envelope = json.loads(result["messages"][0].content)
+        assert envelope["ok"] is True
+        assert "File not found" in envelope["content"]
+        assert "cwd secret" not in envelope["content"]
 
 
 class TestCheckInteractionNode:
