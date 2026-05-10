@@ -8,7 +8,13 @@ import json
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from graph_code.agent.graph import run_agent
-from graph_code.agent.nodes import append_tool_results, build_prompt, call_model, compact_check
+from graph_code.agent.nodes import (
+    append_tool_results,
+    build_prompt,
+    call_model,
+    compact_check,
+    recovery_handler,
+)
 from graph_code.agent.state import create_initial_state
 from graph_code.config import Config
 from graph_code.llm.protocol import validate_tool_message_protocol
@@ -469,6 +475,26 @@ def test_summary_compact_invalidates_prompt_cache(tmp_path):
 
     assert result["transition_reason"] == "summary_compact_complete"
     assert result["system_prompt"]
+    assert result["prompt_state"]["cache"].get("memory") != "old"
+    assert result["prompt_state"]["invalidated"] is False
+
+
+def test_reactive_context_compact_rebuilds_system_prompt(tmp_path):
+    state = create_initial_state()
+    state["error"] = "Error code: 400 - context length exceeded"
+    state["system_prompt"] = "OLD SYSTEM PROMPT"
+    state["prompt_state"]["cache"] = {"memory": "old"}
+    state["messages"] = [
+        HumanMessage(content="historical context " + ("x" * 6000)),
+        HumanMessage(content="current request"),
+    ]
+    config = _compact_test_config(tmp_path)
+
+    result = recovery_handler(state, config=config)
+
+    assert result["transition_reason"] == "context_compact_retry"
+    assert result["system_prompt"]
+    assert result["system_prompt"] != "OLD SYSTEM PROMPT"
     assert result["prompt_state"]["cache"].get("memory") != "old"
     assert result["prompt_state"]["invalidated"] is False
 

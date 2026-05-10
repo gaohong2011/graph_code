@@ -22,8 +22,8 @@ def build_system_prompt(state: dict[str, Any], config: Any) -> str:
         cached_section(state, "task_behavior", task_behavior_section),
         cached_section(state, "tool_behavior", tool_behavior_section),
         cached_section(state, "context_behavior", context_behavior_section),
-        cached_section(state, "project_instructions", lambda: project_instruction_section(config)),
-        cached_section(state, "memory", lambda: memory_section(config)),
+        project_instruction_section(config),
+        memory_section(config),
         environment_section(config),
     ]
     prompt_state = dict(state.get("prompt_state") or {})

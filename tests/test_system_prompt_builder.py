@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from graph_code.agent.nodes import build_prompt, call_model
+from graph_code.agent.memory.paths import memory_paths_for_project
 from graph_code.agent.prompt.builder import build_system_prompt
 from graph_code.agent.prompt.cache import invalidate_prompt_cache
 from graph_code.agent.prompt.project_instructions import load_project_instructions
@@ -14,6 +15,7 @@ def test_project_instructions_load_root_to_leaf_priority(tmp_path):
     root = tmp_path / "repo"
     leaf = root / "pkg"
     leaf.mkdir(parents=True)
+    (root / ".git").mkdir()
     (root / "CLAUDE.md").write_text("root instruction", encoding="utf-8")
     (leaf / "CLAUDE.md").write_text("leaf instruction", encoding="utf-8")
     config = Config.for_tests(working_dir=leaf, model="mock")
@@ -23,7 +25,49 @@ def test_project_instructions_load_root_to_leaf_priority(tmp_path):
     assert text.index("root instruction") < text.index("leaf instruction")
 
 
+def test_project_instructions_ignore_parent_outside_git_root(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("outside instruction", encoding="utf-8")
+    root = tmp_path / "repo"
+    leaf = root / "pkg"
+    leaf.mkdir(parents=True)
+    (root / ".git").mkdir()
+    (root / "CLAUDE.md").write_text("repo instruction", encoding="utf-8")
+    (leaf / "CLAUDE.md").write_text("leaf instruction", encoding="utf-8")
+    config = Config.for_tests(working_dir=leaf, model="mock")
+
+    text = load_project_instructions(config)
+
+    assert "outside instruction" not in text
+    assert text.index("repo instruction") < text.index("leaf instruction")
+
+
+def test_project_instructions_without_git_load_only_cwd(tmp_path):
+    parent = tmp_path / "parent"
+    cwd = parent / "child"
+    cwd.mkdir(parents=True)
+    (parent / "CLAUDE.md").write_text("parent instruction", encoding="utf-8")
+    (cwd / "CLAUDE.md").write_text("cwd instruction", encoding="utf-8")
+    config = Config.for_tests(working_dir=cwd, model="mock")
+
+    text = load_project_instructions(config)
+
+    assert "parent instruction" not in text
+    assert "cwd instruction" in text
+
+
+def test_project_instructions_strip_crlf_frontmatter(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "CLAUDE.md").write_text("---\r\ntitle: Test\r\n---\r\nproject rule", encoding="utf-8")
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+
+    text = load_project_instructions(config)
+
+    assert "title: Test" not in text
+    assert "project rule" in text
+
+
 def test_system_prompt_contains_claude_code_like_sections(tmp_path):
+    (tmp_path / ".git").mkdir()
     (tmp_path / "CLAUDE.md").write_text("project rule", encoding="utf-8")
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     state = create_initial_state()
@@ -36,6 +80,34 @@ def test_system_prompt_contains_claude_code_like_sections(tmp_path):
     assert "persistent, file-based memory system" in prompt
     assert "project rule" in prompt
     assert str(tmp_path) in prompt
+
+
+def test_system_prompt_refreshes_project_instructions_without_compaction(tmp_path):
+    (tmp_path / ".git").mkdir()
+    instructions = tmp_path / "CLAUDE.md"
+    instructions.write_text("old project rule", encoding="utf-8")
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    state = create_initial_state()
+
+    first = build_system_prompt(state, config)
+    instructions.write_text("new project rule", encoding="utf-8")
+    second = build_system_prompt(state, config)
+
+    assert "old project rule" in first
+    assert "new project rule" in second
+
+
+def test_system_prompt_refreshes_memory_index_without_compaction(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    state = create_initial_state()
+    paths = memory_paths_for_project(config)
+
+    first = build_system_prompt(state, config)
+    paths.memory_index.write_text("- [New](new.md) - new memory text\n", encoding="utf-8")
+    second = build_system_prompt(state, config)
+
+    assert "new memory text" not in first
+    assert "new memory text" in second
 
 
 def test_build_prompt_stores_system_prompt(tmp_path):
@@ -59,7 +131,7 @@ def test_invalidate_prompt_cache_mutates_state():
     assert state["prompt_state"]["invalidated"] is True
 
 
-def test_call_model_uses_built_system_prompt(tmp_path):
+def test_call_model_mock_uses_message_context_for_response(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     state = create_initial_state()
     state["messages"] = [HumanMessage(content="hello")]

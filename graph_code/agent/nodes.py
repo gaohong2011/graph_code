@@ -577,7 +577,8 @@ def recovery_handler(state: AgentState, config: Config | None = None) -> dict[st
     error = state.get("error")
     if error:
         if _is_context_too_long_error(str(error)) and _recovery_budget(state, "context_retry_budget") > 0:
-            compacted = compact_check(state, config=config, force=True)
+            cfg = config or get_config()
+            compacted = compact_check(state, config=cfg, force=True)
             recovery = _consume_recovery_budget(state, "context_retry_budget")
             update = {
                 "error": None,
@@ -585,6 +586,10 @@ def recovery_handler(state: AgentState, config: Config | None = None) -> dict[st
                 "recovery_state": recovery,
             }
             update.update(compacted)
+            prompt_input = {**state, **update}
+            prompt_input["prompt_state"] = invalidate_prompt_cache(prompt_input)
+            update["system_prompt"] = _safe_build_system_prompt(prompt_input, cfg)
+            update["prompt_state"] = prompt_input.get("prompt_state", {})
             update["transition_reason"] = "context_compact_retry"
             return update
         if _is_transient_model_error(str(error)) and _recovery_budget(state, "transient_retry_budget") > 0:
