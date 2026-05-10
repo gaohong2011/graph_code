@@ -58,6 +58,21 @@ def test_memory_prompt_can_be_disabled(tmp_path):
     assert build_memory_prompt(config) is None
 
 
+def test_memory_prompt_creates_missing_memory_dir_and_index(tmp_path):
+    config = Config.for_tests(working_dir=tmp_path, model="mock")
+    config.graph_code_home = str(tmp_path / "home")
+    paths = memory_paths_for_project(config)
+
+    assert not paths.memory_dir.exists()
+    assert not paths.memory_index.exists()
+
+    prompt = build_memory_prompt(config)
+
+    assert prompt is not None
+    assert paths.memory_dir.is_dir()
+    assert paths.memory_index.is_file()
+
+
 def test_memory_prompt_includes_taxonomy_and_index(tmp_path):
     config = Config.for_tests(working_dir=tmp_path, model="mock")
     config.graph_code_home = str(tmp_path / "home")
