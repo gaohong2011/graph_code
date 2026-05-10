@@ -28,6 +28,29 @@ def test_memory_override_must_be_safe(tmp_path):
         assert validate_memory_root(unsafe) is None
 
 
+def test_memory_override_rejects_null_bytes_and_existing_files(tmp_path):
+    existing_file = tmp_path / "memory-file"
+    existing_file.write_text("not a directory", encoding="utf-8")
+
+    assert validate_memory_root(f"{tmp_path}\0memory") is None
+    assert validate_memory_root(str(existing_file)) is None
+
+
+def test_memory_paths_fall_back_when_override_points_to_file(tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    memory_file = tmp_path / "memory-file"
+    memory_file.write_text("not a directory", encoding="utf-8")
+    config = Config.for_tests(working_dir=project, model="mock")
+    config.graph_code_home = str(tmp_path / "home")
+    config.memory_dir = str(memory_file)
+
+    paths = memory_paths_for_project(config)
+
+    assert paths.memory_dir != memory_file.resolve()
+    assert str(paths.memory_dir).startswith(str(tmp_path / "home" / "projects"))
+
+
 def test_scan_memory_headers_reads_frontmatter(tmp_path):
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
@@ -48,6 +71,24 @@ def test_scan_memory_headers_reads_frontmatter(tmp_path):
     assert len(headers) == 1
     assert headers[0].filename == "testing.md"
     assert headers[0].description == "Use real database in integration tests"
+    assert headers[0].memory_type == "feedback"
+
+
+def test_scan_memory_headers_normalizes_memory_type(tmp_path):
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "testing.md").write_text(
+        "---\n"
+        "description: Use real database in integration tests\n"
+        "type: Feedback \n"
+        "---\n"
+        "Body\n",
+        encoding="utf-8",
+    )
+
+    headers = scan_memory_headers(memory_dir)
+
+    assert len(headers) == 1
     assert headers[0].memory_type == "feedback"
 
 

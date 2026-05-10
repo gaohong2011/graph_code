@@ -31,6 +31,9 @@ def parse_frontmatter(content: str) -> ParsedFrontmatter:
 
 
 def normalize_memory_type(raw: str | None) -> str | None:
-    if raw in MEMORY_TYPES:
-        return raw
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in MEMORY_TYPES:
+        return value
     return None

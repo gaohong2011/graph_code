@@ -36,12 +36,14 @@ def memory_paths_for_project(config: Any) -> MemoryPaths:
 def validate_memory_root(raw: str | None) -> Path | None:
     if not raw:
         return None
+    if "\0" in raw:
+        return None
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
         return None
     try:
         path = candidate.resolve()
-    except OSError:
+    except (OSError, ValueError):
         return None
     text = str(path)
     if "\0" in text:
@@ -49,6 +51,8 @@ def validate_memory_root(raw: str | None) -> Path | None:
     if path == path.anchor or len(path.parts) < 3:
         return None
     if path == Path.home().resolve():
+        return None
+    if path.exists() and not path.is_dir():
         return None
     return path
 
