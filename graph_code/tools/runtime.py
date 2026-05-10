@@ -12,8 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
-from ..agent.memory.legacy import save_legacy_memory
-from ..agent.memory.paths import memory_paths_for_project
 from ..config import Config, get_config
 from ..entities.background import background_check, background_run
 from ..entities.schedules import schedule_create, schedule_delete, schedule_list
@@ -80,7 +78,7 @@ class ToolExecutionRuntime:
         self.memory_dir = (
             None
             if getattr(self.config, "memory_disabled", False)
-            else memory_paths_for_project(self.config).memory_dir
+            else self._memory_dir_for_config()
         )
         self.mcp_registry = mcp_registry or MCPClientRegistry(self.working_dir)
 
@@ -240,6 +238,20 @@ class ToolExecutionRuntime:
             return target
         raise ValueError(f"Access denied: {file_path} is outside working directory")
 
+    def _display_path(self, file_path: Path) -> str:
+        if _is_relative_to(file_path, self.working_dir):
+            return file_path.relative_to(self.working_dir).as_posix()
+        if self.memory_dir is not None:
+            memory_dir = self.memory_dir.resolve()
+            if _is_relative_to(file_path, memory_dir):
+                return f"memory/{file_path.relative_to(memory_dir).as_posix()}"
+        return file_path.as_posix()
+
+    def _memory_dir_for_config(self) -> Path:
+        from ..agent.memory.paths import memory_paths_for_project
+
+        return memory_paths_for_project(self.config).memory_dir
+
     def read_file(self, file_path: str, offset: int = 0, limit: int | None = None) -> str:
         target = self._safe_path(file_path)
         if not target.exists():
@@ -321,8 +333,7 @@ class ToolExecutionRuntime:
             try:
                 for line_no, line in enumerate(file_path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
                     if regex is None or regex.search(line):
-                        rel = file_path.relative_to(self.working_dir)
-                        matches.append(f"{rel}:{line_no}: {line[:200]}")
+                        matches.append(f"{self._display_path(file_path)}:{line_no}: {line[:200]}")
             except OSError:
                 continue
         return "\n".join(matches) if matches else f"No matches found for pattern: {needle}"
@@ -353,6 +364,8 @@ class ToolExecutionRuntime:
     def save_memory(self, namespace: str, key: str, value: str) -> str:
         if getattr(self.config, "memory_disabled", False):
             return "Error: memory is disabled"
+        from ..agent.memory.legacy import save_legacy_memory
+
         return save_legacy_memory(self.config, namespace, key, value)
 
     def _task_create(self, subject: str, description: str = "", **kwargs: Any) -> str:

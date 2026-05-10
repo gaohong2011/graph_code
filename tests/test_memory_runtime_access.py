@@ -1,8 +1,28 @@
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 from graph_code.agent.memory.paths import memory_paths_for_project
 from graph_code.config import Config
 from graph_code.tools.runtime import ToolExecutionRuntime
+
+
+def test_runtime_imports_in_fresh_process():
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from graph_code.tools.runtime import ToolExecutionRuntime; print(ToolExecutionRuntime.__name__)",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ToolExecutionRuntime" in result.stdout
 
 
 def test_runtime_can_access_configured_memory_dir_outside_workspace(tmp_path):
@@ -44,6 +64,27 @@ def test_runtime_rejects_non_memory_home_path(tmp_path):
 
     assert result.ok is False
     assert "outside working directory" in result.content
+
+
+def test_runtime_can_search_configured_memory_dir_outside_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    memory = tmp_path / "memory-root"
+    memory.mkdir()
+    (memory / "policy.md").write_text("Use real DB.", encoding="utf-8")
+    config = Config.for_tests(working_dir=workspace, model="mock")
+    config.memory_dir = str(memory)
+
+    runtime = ToolExecutionRuntime(workspace, config=config)
+
+    result = runtime.execute(
+        [{"id": "search-memory", "name": "search_files", "args": {"path": str(memory), "pattern": "real DB"}}],
+        skip_permissions=True,
+    )[0]
+
+    assert result.ok is True
+    assert "Use real DB." in result.content
+    assert "ValueError" not in result.content
 
 
 def test_legacy_save_memory_writes_topic_and_index(tmp_path):
