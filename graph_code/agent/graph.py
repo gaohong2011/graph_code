@@ -64,7 +64,7 @@ def build_agent(
         return compact_check(state, config=cfg)
 
     def final_response_node(state: AgentState) -> dict[str, Any]:
-        update = final_response(state)
+        update = final_response(state, config=cfg)
         merged = dict(state)
         merged.update(update)
         session_update = maybe_update_session_memory(merged, cfg)

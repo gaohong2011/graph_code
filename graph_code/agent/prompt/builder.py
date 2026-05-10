@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..memory.relevance import build_relevant_memory_context, select_relevant_memories
 from .cache import cached_section
 from .sections import (
     context_behavior_section,
@@ -26,8 +27,23 @@ def build_system_prompt(state: dict[str, Any], config: Any) -> str:
         memory_section(config),
         environment_section(config),
     ]
+    latest_query = _latest_user_text(state)
+    relevant = select_relevant_memories(latest_query, config) if latest_query else []
+    relevant_context = build_relevant_memory_context(relevant)
+    if relevant_context:
+        sections.append(relevant_context)
+        memory_state = dict(state.get("memory_state") or {})
+        memory_state["surfaced_memories"] = [path.as_posix() for path in relevant]
+        state["memory_state"] = memory_state
     prompt_state = dict(state.get("prompt_state") or {})
     prompt_state["invalidated"] = False
     prompt_state["last_error"] = None
     state["prompt_state"] = prompt_state
     return "\n\n".join(section for section in sections if section)
+
+
+def _latest_user_text(state: dict[str, Any]) -> str:
+    for message in reversed(state.get("messages", []) or []):
+        if getattr(message, "type", "") == "human":
+            return str(getattr(message, "content", ""))
+    return ""

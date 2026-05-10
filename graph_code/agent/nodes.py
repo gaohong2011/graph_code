@@ -283,6 +283,8 @@ def build_prompt(state: AgentState, config: Config | None = None) -> dict[str, A
         prompt_input["prompt_state"] = invalidate_prompt_cache(prompt_input)
         compacted["system_prompt"] = _safe_build_system_prompt(prompt_input, cfg)
         compacted["prompt_state"] = prompt_input.get("prompt_state", {})
+        if prompt_input.get("memory_state") != state.get("memory_state"):
+            compacted["memory_state"] = prompt_input.get("memory_state", {})
         return compacted
     update: dict[str, Any] = {"transition_reason": "prompt_built"}
     if not state.get("context_messages"):
@@ -290,6 +292,8 @@ def build_prompt(state: AgentState, config: Config | None = None) -> dict[str, A
     prompt_input = {**state, **update}
     update["system_prompt"] = _safe_build_system_prompt(prompt_input, cfg)
     update["prompt_state"] = prompt_input.get("prompt_state", {})
+    if prompt_input.get("memory_state") != state.get("memory_state"):
+        update["memory_state"] = prompt_input.get("memory_state", {})
     return update
 
 
@@ -609,13 +613,48 @@ def recovery_handler(state: AgentState, config: Config | None = None) -> dict[st
     return {"transition_reason": state.get("transition_reason")}
 
 
-def final_response(state: AgentState) -> dict[str, Any]:
-    if state.get("final_response"):
-        return {"final": True}
-    if state.get("error"):
-        return {"final_response": f"Error: {state['error']}", "final": True}
-    last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage)), None)
-    return {"final_response": last_ai.content if last_ai else "", "final": True}
+def final_response(state: AgentState, config: Config | None = None) -> dict[str, Any]:
+    response = state.get("final_response")
+    if not response:
+        if state.get("error"):
+            response = f"Error: {state['error']}"
+        else:
+            last_ai = next((m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage)), None)
+            response = last_ai.content if last_ai else ""
+    update = {"final_response": response, "final": True}
+    memory_update = _maybe_extract_explicit_memory(state, config or get_config())
+    update.update(memory_update)
+    return update
+
+
+def _maybe_extract_explicit_memory(state: AgentState, config: Config) -> dict[str, Any]:
+    if not getattr(config, "auto_memory_extraction_enabled", False):
+        return {}
+    last_human = next(
+        (m for m in reversed(state.get("messages", [])) if isinstance(m, HumanMessage)),
+        None,
+    )
+    if not last_human:
+        return {}
+    text = str(last_human.content).strip()
+    lowered = text.lower()
+    if not any(marker in lowered for marker in ("remember that", "please remember", "记住")):
+        return {}
+    value = text
+    from .memory.legacy import save_legacy_memory
+
+    try:
+        result = save_legacy_memory(config, "feedback", "explicit user memory", value)
+        memory_state = dict(state.get("memory_state") or {})
+        writes = list(memory_state.get("recent_memory_writes") or [])
+        writes.append(result)
+        memory_state["recent_memory_writes"] = writes[-20:]
+        memory_state["last_error"] = None
+        return {"memory_state": memory_state}
+    except Exception as exc:
+        memory_state = dict(state.get("memory_state") or {})
+        memory_state["last_error"] = f"{type(exc).__name__}: {exc}"
+        return {"memory_state": memory_state}
 
 
 def agent_node(state: AgentState) -> dict[str, Any]:
